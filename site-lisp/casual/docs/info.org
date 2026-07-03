@@ -1,0 +1,72 @@
+* Info
+#+CINDEX: Info
+#+VINDEX: casual-info-tmenu
+
+Casual Info is a user interface for the Emacs Info Reader. Its top level library is ~casual-info~.
+
+[[file:images/casual-info-screenshot.png]]
+
+** Info Install
+:PROPERTIES:
+:CUSTOM_ID: info-install
+:END:
+
+#+CINDEX: Info Install
+The main menu for Casual Info is ~casual-info-tmenu~. Bind this menu in the keymap ~Info-mode-map~ as follows in your initialization file.
+
+#+begin_src elisp :lexical no
+  (keymap-set Info-mode-map "C-o" #'casual-info-tmenu)
+#+end_src
+
+While not required, adding this configuration to your Emacs initialization file will synchronize keybindings between Casual Info and the Info reader. A nice visual improvement is to use ~hl-line-mode~ to highlight the line where the cursor is at. Enabling ~scroll-lock-mode~ will enable scrolling the buffer for content that is larger than its window size with the navigation keys.
+
+#+begin_src elisp :lexical no
+  ;; # Info
+  ;; Use web-browser history navigation bindings
+  (keymap-set Info-mode-map "M-[" #'Info-history-back)
+  (keymap-set Info-mode-map "M-]" #'Info-history-forward)
+  ;; Bind p and n to paragraph navigation
+  (keymap-set Info-mode-map "p" #'casual-info-browse-backward-paragraph)
+  (keymap-set Info-mode-map "n" #'casual-info-browse-forward-paragraph)
+  ;; Bind h and l to navigate to previous and next nodes
+  ;; Bind j and k to navigate to next and previous references
+  (keymap-set Info-mode-map "h" #'Info-prev)
+  (keymap-set Info-mode-map "j" #'Info-next-reference)
+  (keymap-set Info-mode-map "k" #'Info-prev-reference)
+  (keymap-set Info-mode-map "l" #'Info-next)
+  ;; Bind / to search
+  (keymap-set Info-mode-map "/" #'Info-search)
+  ;; Set Bookmark
+  (keymap-set Info-mode-map "B" #'bookmark-set)
+
+  (add-hook 'Info-mode-hook #'hl-line-mode)
+  (add-hook 'Info-mode-hook #'scroll-lock-mode)
+#+end_src
+
+
+** Info Usage
+#+CINDEX: Info Usage
+
+[[file:images/casual-info-screenshot.png]]
+
+Invoke ~M-x info~ to launch the Info reader. Move the point inside the Info window and invoke {{{kbd(C-o)}}} (or a binding of your choosing) to launch the Casual Info menu.
+
+The main menu for Casual Info is organized into the following sections:
+
+- Overview :: Commands that navigate you to a starting point in the info documentation.
+
+- Goto :: Commands that have you specify where to goto in the structure of an Info document.
+
+- Search :: Commands for searching Info.
+
+- History :: Commands related to the history of pages (nodes) navigated to in Info. Note that these commands should not be confused with structural navigation.
+
+- Scroll :: Commands to scroll down or up the current Info page.
+
+- Navigation :: Command related to structurally navigating an Info document. Note that these commands should not be confused with historical navigation.
+
+- Quick :: Miscellaneous commands for working with an Info document. Included are commands for bookmarks, copying the current node name, and cloning the buffer.
+
+#+TEXINFO: @subheading Info Unicode Symbol Support
+By enabling “{{{kbd(u)}}} Use Unicode Symbols” from the Settings menu, Casual Info will use Unicode symbols as appropriate in its menus. 
+

@@ -1,0 +1,57 @@
+* To reduce LoC
+
+- Unify some subroutines for capture/refile/extract/insert/find
+
+- Upstream some stuff to Org
+
+  - =org-node-narrow-to-drawer-p=
+
+  - Patch =org-end-of-meta-data= to support file level (without FULL like =org-node-goto-new-drawer-site=, with FULL like =org-node-full-end-of-meta-data=)
+
+- Upstream applicable parts of =org-node-roam-accelerator-mode= to Org-roam
+
+- Get https://github.com/nobiot/org-transclusion/pull/268 merged
+
+* Other
+
+- A workflow to allow *untitled nodes*
+
+  - [X] Create node without needing to type a title
+  - [X] =org-node-grep=
+  - [ ] Let =org-node-grep= create new nodes
+  - [ ] Rewrite =org-node-grep= so it does not need Consult
+  - [ ] Subroutine for *identifying a node by a grep result*, which could be used to insert/extract/capture/refile while only ever looking at grep lines
+
+- Let =org-node-grep= obey =org-node-filter-fn=
+
+- Let user preview the filename that will be created.  (Currently, when option =org-node-file-directory-ask= is t, it just asks you for a directory, which is weirdly restrictive.)
+
+- Make a command akin to =org-node-lint-all-files=, but that just runs =org-element-parse-buffer= with =org-element--cache-diagnostics= on, then prints any issues.
+
+  - Or rewrite org-mem so it uses =org-element-parse-buffer= from the start.
+
+- Help Embark and Marginalia integrate more deeply with =org-node-read-candidate=
+
+  - Not sure I understand "completion categories", but IIUC, we don't really have a completion-category representing "an Org entry somewhere /which is not necessarily in the current buffer"/.
+
+    Might need agreement with upstream Org for the shape of a data object representing that?  Something like [[https://github.com/meedstrom/org-mem/blob/main/indexed.el][org-mem.el]]'s struct =org-mem-entry=?  Once that's in, then embark and such packages could easily build in handlers for that, then org-roam and such packages can automatically benefit if they translate from their internal data objects.
+
+- Make =org-node-rename-asset-and-rewrite-links= easier to use
+
+- Write a glossary, to clarify e.g. what is a "ref" vs "reflink"
+
+- =org-node-seq-dispatch=: Free up keys "j", "n", "p", "c"
+
+- More =org-node-seq-defs= wrappers:
+
+  - A wrapper that looks at a given "master node" that defines a seq: links in the body text become the seq.
+
+  - A wrapper that defines a seq as simply the files in a given subdirectory.
+
+- Count some ref variants as the same ref
+
+  If a roam-ref exists like =//www.website.com=, allow counting a link =//www.website.com?key=val&key2=val2#hash= as a reflink to the same, unless the latter has a roam-ref of its own.
+
+  Would prolly be a fairly expensive operation.  After building tables ref<>id and dest<>links, run thru every dest and check if an existing ref is a prefix of it, then simply nconc the value with the value for the corresponding dest.  But having to check for other dests that may also be a prefix is where it would get expensive... O(n^2) I guess.
+
+  Hm... Sort all dests alphabetically.  All near-matches will be very close to each other, and indeed an alphabetic sort even results in a sort-by-length within each possible "group".  So just run down progressively shorter prefixes until the length goes up again, then we know we're in another group.  Rough idea, but O(n^2) looks beatable.

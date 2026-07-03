@@ -1,0 +1,63 @@
+* Calc
+#+CINDEX: Calc
+#+VINDEX: casual-calc-tmenu
+Casual Calc is a user interface for Emacs Calc ([[info:calc#Top]]).
+
+[[file:images/casual-calc-tmenu.png]]
+
+** Calc Install
+:PROPERTIES:
+:CUSTOM_ID: calc-install
+:END:
+
+#+CINDEX: Calc Install
+
+To install Casual Calc, add the following lines to your Emacs initialization file with your binding of preference.
+
+#+begin_src elisp :lexical no
+  (keymap-set calc-mode-map "C-o" #'casual-calc-tmenu)
+  (keymap-set calc-alg-map "C-o" #'casual-calc-tmenu)
+#+end_src
+
+
+** Calc Usage
+#+CINDEX: Calc Usage
+
+[[file:images/casual-calc-tmenu.png]]
+
+To launch Calc, invoke  ~M-x calc~. When the point is in the Calc window, invoke {{{kbd(C-o)}}} (or a binding of your choosing) to launch the Casual Calc interface.
+
+For nearly all menus, algebraic entry via the {{{kbd(')}}} binding is available, as well as basic calculator operations (addition, subtraction, multiplication, division) and stack operations (pop, enter).
+
+Casual Calc organizes its main menu into the following sections:
+
+- Calc :: Commands for common calculator functions.
+- Constants ::  Common math constants.
+- Operators :: Common math operators.
+- Stack :: Commands for stack operations.
+- Arithmetic :: Entry point for sub-menus of commands classified as arithmetic operations.
+- Functions :: Entry point for sub-menus of commands organized into different classes of functionality.
+- Settings :: Entry point for sub-menus of commands to configure Calc settings.
+
+#+TEXINFO: @subheading Calc Basics
+
+It helps to know some basics about Calc.
+
+- Calc is a stack-based calculator that supports both RPN and algebraic style entry.
+  - By default it uses RPN entry, but this can be changed to algebraic.
+- Stack based operations are always RPN-style.
+- Undo has the keybinding ~U~, redo is ~D~.
+- The top of the stack is referred to as ~1:~
+- Calc vectors are punctuated with ~[~ and ~]~ (e.g. ~[2 3]~)  Matrix values are represented as vectors within a vector. For example, ~[[1 0] [0 1]]~ is a square diagonal matrix.
+- Calc vector indexes are 1-offset.
+- Intervals
+  - Inclusive intervals are represented as [𝑛..𝑚], where 𝑛 < 𝑚.
+  - Exclusive intervals are represented as (𝑛..𝑚), where 𝑛 < 𝑚.
+  - Any combination of lower and upper bounds set to be inclusive or exclusive is supported.
+- Complex numbers are entered as (𝑟, 𝑖), where 𝑟 is the real part and 𝑖 is the imaginary.
+- Radix numbers are entered as 𝑏#𝑛 where 𝑏 is the base value and 𝑛 is the number. For example entering ~2#0101~ will put ~5~ on the stack.
+- H:M:S values are default entered as ℎ@ 𝑚" 𝑠'.
+- Org-mode active timestamps can be entered into Calc.
+- The top of the stack (1:) can be edited by pressing the ~`~ key.
+- Entering a single quote (') will prompt you for an algebraic entry.
+

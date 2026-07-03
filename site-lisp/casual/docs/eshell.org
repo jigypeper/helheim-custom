@@ -1,0 +1,44 @@
+* Eshell
+#+CINDEX: Eshell
+#+VINDEX: casual-eshell-tmenu
+
+Casual Eshell is a user interface for ~Eshell~, a shell-like command interpreter implemented in Emacs Lisp.
+
+[[file:images/casual-eshell-screenshot.png]]
+
+** Eshell Install
+:PROPERTIES:
+:CUSTOM_ID: eshell-install
+:END:
+
+#+CINDEX: Eshell Install
+
+In your initialization file, bind the Transient ~casual-eshell-tmenu~ to your key binding of preference.
+
+#+begin_src elisp :lexical no
+  (keymap-set eshell-mode-map "C-o" #'casual-eshell-tmenu)
+#+end_src
+
+
+** Eshell Usage
+#+CINDEX: Eshell Usage
+
+Eshell can be invoked via ~M-x eshell~. In the Eshell window, press {{{kbd(C-o)}}} (or your binding of preference) to raise the menu ~casual-eshell-tmenu~.
+
+The following sections are offered in the menu:
+
+- Input :: Commands supporting input to the current prompt. 
+- Argument :: Commands supporting arguments in the current prompt.
+- Prompt :: Navigation of previous prompt commands.
+- Output :: Commands related to display of prompt. Commands marked with an ~n~ superscript support an optional prefix ({{{kbd(C-u)}}}) value.
+- Misc :: Miscellaneous commands.
+- Process :: Signal commands to send to the process. This section is only visible when a process is running.
+  
+
+  [[file:images/casual-eshell-process-screenshot.png]]
+
+  
+#+TEXINFO: @subheading Eshell Unicode Symbol Support
+
+By enabling “{{{kbd(u)}}} Use Unicode Symbols” from the Settings menu, Casual Eshell will use Unicode symbols as appropriate in its menus.
+

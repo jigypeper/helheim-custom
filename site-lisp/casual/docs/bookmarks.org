@@ -1,0 +1,90 @@
+* Bookmarks
+#+CINDEX: Bookmarks
+#+VINDEX: casual-bookmarks-tmenu
+
+Casual Bookmarks is a user interface for the Emacs Bookmarks list ([[info:emacs#Bookmarks]]). Its top-level library is ~casual-bookmarks~.
+
+[[file:images/casual-bookmarks-screenshot.png]]
+
+** Bookmarks Install
+:PROPERTIES:
+:CUSTOM_ID: bookmarks-install
+:END:
+
+#+CINDEX: Bookmarks Install
+
+To install Casual Bookmarks, add the following line to your Emacs initialization file with your binding of preference.
+
+#+begin_src elisp :lexical no
+  (keymap-set bookmark-bmenu-mode-map "C-o" #'casual-bookmarks-tmenu)
+#+end_src
+
+Use these keybindings to configure the bookmark list to be consistent with keybindings used by Casual Bookmarks.
+
+#+begin_src elisp :lexical no
+  (keymap-set bookmark-bmenu-mode-map "J" #'bookmark-jump)
+#+end_src
+
+Casual Bookmarks also includes the keymap ~casual-bookmarks-main-menu~ which inserts a /Bookmarks/ menu into the main menu bar as shown below.
+
+[[file:images/bookmarks-main-menu.png]]
+
+To enable this, add the following configuration to your initialization file.
+
+#+begin_src elisp :lexical no
+  (require 'casual-bookmarks)
+  (easy-menu-add-item global-map '(menu-bar)
+                      casual-bookmarks-main-menu
+                      "Tools")
+#+end_src
+
+While not necessary, having the current bookmark highlighted is convenient. Enable  ~hl-line-mode~ for the bookmark list as shown below.
+
+#+begin_src elisp :lexical no
+  (require 'hl-line)
+  (add-hook 'bookmark-bmenu-mode-hook #'hl-line-mode)
+#+end_src
+
+Finally, customize the variable ~bookmark-save-flag~ to the value ~1~ to ensure that your bookmark changes are always saved.
+
+The above guidance largely extends the work done in the blog post [[http://yummymelon.com/devnull/using-bookmarks-in-emacs-like-you-do-in-web-browsers.html][Using Bookmarks in Emacs like you do in Web Browsers]]. 
+
+** Bookmarks Usage
+#+CINDEX: Bookmarks Usage
+
+[[file:images/casual-bookmarks-screenshot.png]]
+
+
+Casual Bookmarks organizes its main menu into the following sections:
+
+- Operations :: Commands that can operate on a bookmark such as editing or opening them.
+
+- Mark :: Commands that allow for bulk operation on multiple bookmarks.
+
+- Display :: Control how bookmarks are displayed and filtered.
+
+- Annotation :: Commands for annotating a bookmark.
+
+- Navigation :: Commands for navigating to a bookmark.
+
+- Column :: Commands to navigate and control the display of the table layout for bookmarks.
+
+
+#+TEXINFO: @subheading Unicode Symbol Support
+
+[[file:images/casual-bookmarks-unicode-screenshot.png]]
+
+By enabling “{{{kbd(u)}}} Use Unicode Symbols” from the Settings menu, Casual Bookmarks will use Unicode symbols as appropriate in its menus. The following mapping is shown in the table below:
+
+| Name                 | Plain     | Unicode |
+|----------------------+-----------+---------|
+| :previous            | Previous  | ↑       |
+| :next                | Next      | ↓       |
+| :jump                | Jump      | 🚀     |
+| :beginning-of-buffer | Beginning | ⤒      |
+| :end-of-buffer       | End       | ⤓      |
+| :backward            | Backward  | ←       |
+| :forward             | Forward   | →       |
+| :narrow              | Narrow    | →←      |
+| :widen               | Widen     | ←→      |
+
