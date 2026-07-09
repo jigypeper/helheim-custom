@@ -1,0 +1,62 @@
+* hel-paredit
+
+[[https://github.com/anuvyklack/hel][Hel]] extension for structural editing of Lisp S-expressions.
+
+** Install
+
+#+begin_src emacs-lisp
+;; Dependency
+(use-package paredit :ensure t)
+
+(use-package hel-paredit
+  :vc (:url "https://github.com/anuvyklack/hel-paredit.git" :rev "main")
+  :hook (emacs-lisp-mode-hook . hel-paredit-mode))
+#+end_src
+
+** Keybindings
+
+- =W=, =B=, =E=, =miW=, =maW= :: WORD text objects that ignore parentheses.
+
+- =d= / =D= ::
+  Refuses to *cut* / *delete* if doing so would leave unbalanced parentheses.
+
+*** Structural editing of S-expressions
+
+The most noticeable feature is "AST" climbing (in quotes because Lisp code
+*is* its AST — which is yet another reason why Lisp is superior):
+
++ =C-j= / =C-k= or =M-i= / =M-o= ::
+  Select a *nested* / *enclosing* AST node. The mnemonic or mental model:
+  - =C-j= / =C-k= — down / up
+  - =M-i= / =M-o= — inside / outside
+
++ =C-h= / =C-l= or =M-n= / =M-p= ::
+  Select the *next* / *previous* AST node.
+
++ =H= / =L= ::
+  Select the enclosing node in the AST and place the cursor *before* / *after* it.
+
+Try it yourself. Since I started using it, I have no idea how I ever edited
+without it — it’s one of the best and most natural ways to work with
+S-expressions.
+
+*** Slurping & Barfing
+
+- =<= / =>= ::
+  Place the cursor before an opening delimiter to *slurp* / *barf* the S-expression at
+  that end, or place the cursor after a closing delimiter to operate on it. It’s
+  quite intuitive — give it a try. Inspired by [[https://github.com/emacs-evil/evil-cleverparens][evil-cleverparens]].
+
+*** Other
+
+- =M-r= :: Raise S-expression.
+
+- =M-?= :: Convolute S-expression:
+
+  #+begin_src
+  (let ((x 5)             (frob
+        (y 3))       ->    |(let ((x 5)
+    (frob                        (y 3))
+     |(zwonk))                (zwonk)
+    (wibblethwop))            (wibblethwop)))
+  #+end_src

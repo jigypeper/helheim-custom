@@ -1,24 +1,19 @@
-;;; hel-keybindings.el --- Hel keybindings -*- lexical-binding: t; -*-
+;;; hel-keybindings.el --- Hel default keybindings -*- lexical-binding: t -*-
 ;;
-;; Copyright © 2025 Yuriy Artemyev
+;; Copyright © 2025-2026 Yuriy Artemyev
 ;;
 ;; Author: Yuriy Artemyev <anuvyklack@gmail.com>
 ;; Maintainer: Yuriy Artemyev <anuvyklack@gmail.com>
-;; Version: 0.0.1
+;; Version: 0.12.0
 ;; Homepage: https://github.com/anuvyklack/hel
-;; Package-Requires: ((emacs "29.1"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
-;;; Commentary:
-;;
-;;  Hel default keybindings.
-;;
 ;;; Code:
 
-(require 'hel-commands)
-(require 'hel-scrolling)
 (require 'hel-core)
+(require 'hel-commands)
+(require 'hel-scroll)
 
 ;;; Universal argument
 
@@ -49,7 +44,8 @@ use it."
   "M-<mouse-1>" #'hel-toggle-cursor-on-click)
 
 (hel-keymap-global-set :state 'normal
-  ":" #'execute-extended-command
+  ":"   #'execute-extended-command
+  "C-:" #'execute-extended-command-for-buffer
 
   ;; Arrows
   "<left>"  #'hel-backward-char
@@ -72,10 +68,11 @@ use it."
   "F"   #'hel-find-char-backward
   "t"   #'hel-till-char-forward
   "T"   #'hel-till-char-backward
-  "g s" #'hel-beginning-of-line-command
-  "g h" #'hel-first-non-blank
+  "g s" #'hel-first-non-blank
+  "g h" #'hel-beginning-of-line-command
   "g l" #'hel-end-of-line-command
   "g g" #'hel-beginning-of-buffer
+  "g e" #'hel-end-of-buffer
   "G"   #'hel-end-of-buffer
   "}"   #'hel-forward-paragraph
   "{"   #'hel-backward-paragraph
@@ -89,6 +86,9 @@ use it."
   "[ ." #'hel-mark-sentence-backward
   "] e" #'next-error
   "[ e" #'previous-error
+  ;; Because page boudaries are displayed as ^L.
+  "] l" #'forward-page
+  "[ l" #'backward-page
 
   ;; Easymotion / Avy
   "g w" #'hel-avy-word-forward
@@ -113,6 +113,7 @@ use it."
   "y"   #'hel-copy
   "p"   #'hel-paste-after
   "P"   #'hel-paste-before
+  "r"   #'hel-replace-char
   "R"   #'hel-replace-with-kill-ring
   "C-p" #'hel-paste-pop ;; yank-pop
   "C-n" #'hel-paste-undo-pop
@@ -134,24 +135,15 @@ use it."
   "%"   #'hel-mark-whole-buffer
   "C"   #'hel-copy-selection
   "M-c" #'hel-copy-selection-up
-  "("   #'hel-rotate-selections-backward
-  ")"   #'hel-rotate-selections-forward
-  "M-(" #'hel-rotate-selections-content-backward
-  "M-)" #'hel-rotate-selections-content-forward
-  "s"   #'hel-select-regex
-  "S"   #'hel-split-region
+  "s"   #'hel-select-in-selections
+  "S"   #'hel-split-selections
   "M-s" #'hel-split-region-on-newline
-  "K"   #'hel-keep-selections
-  "M-K" #'hel-remove-selections
-  ","   #'hel-delete-all-fake-cursors
-  "M-," #'hel-remove-main-cursor
-  "M--" #'hel-merge-selections
   ";"   #'hel-collapse-selection
   "C-;" #'hel-exchange-point-and-mark
   "M-;" #'hel-exchange-point-and-mark
   "g ;" #'hel-exchange-point-and-mark
   "_"   #'hel-trim-whitespaces-from-selection
-  "&"   #'hel-align-selections
+  "g v" #'hel-restore-cursors
 
   ;; Surround
   "m m" #'hel-jump-to-match-item
@@ -168,15 +160,15 @@ use it."
   "N"   #'hel-search-previous
 
   ;; Scrolling
-  "C-b" #'hel-smooth-scroll-page-up
-  "C-f" #'hel-smooth-scroll-page-down
-  "C-d" #'hel-smooth-scroll-down
-  "C-u" #'hel-smooth-scroll-up
-  "C-e" #'hel-mix-scroll-line-down
-  "C-y" #'hel-mix-scroll-line-up
-  "z z" #'hel-smooth-scroll-line-to-eye-level
-  "z t" #'hel-smooth-scroll-line-to-top
-  "z b" #'hel-smooth-scroll-line-to-bottom
+  "C-b" #'hel-scroll-page-up
+  "C-f" #'hel-scroll-page-down
+  "C-d" #'hel-scroll-down
+  "C-u" #'hel-scroll-up
+  "C-e" #'hel-scroll-line-down
+  "C-y" #'hel-scroll-line-up
+  "z z" '("scroll to eye level" . hel-scroll-line-to-eye-level)
+  "z t" '("scroll to top" . hel-scroll-line-to-top)
+  "z b" '("scroll to bottom" . hel-scroll-line-to-bottom)
 
   ;; Misc
   "."     #'repeat
@@ -187,10 +179,10 @@ use it."
   "C-S-i" #'hel-forward-global-mark-ring
   "g a"   #'describe-char
   "g c"   #'comment-dwim
-  "g i"   #'imenu
+  "g o"   #'imenu
   "g f"   #'find-file-at-point
   "g x"   #'browse-url-at-point
-  "g q"   #'fill-region
+  "g q"   #'fill-paragraph
   "g Q"   #'fill-region-as-paragraph
   "] b"   #'next-buffer
   "[ b"   #'previous-buffer
@@ -206,9 +198,26 @@ use it."
 
   ;; Xref
   "g d" #'xref-find-definitions
-  "g D" #'xref-find-references
+  "g r" #'xref-find-references
   "[ x" #'xref-go-back
   "] x" #'xref-go-forward)
+
+;;;; Keys active while there are multiple cursors
+
+(hel-keymap-set hel-multiple-cursors-mode-map :state 'normal
+  "K"   #'hel-keep-selections
+  "M-K" #'hel-remove-selections
+  ","   #'hel-remove-all-fake-cursors
+  "M-," #'hel-remove-main-cursor
+  "g g" #'hel-first-selection
+  "g e" #'hel-last-selection
+  "G"   #'hel-last-selection
+  "("   #'hel-rotate-selections-backward
+  ")"   #'hel-rotate-selections-forward
+  "M-(" #'hel-rotate-selections-content-backward
+  "M-)" #'hel-rotate-selections-content-forward
+  "M--" #'hel-merge-selections
+  "&"   #'hel-align-selections)
 
 ;;;; Mark commands
 
@@ -344,65 +353,83 @@ use it."
   "m a 8" #'hel-ma-digit-argument
   "m a 9" #'hel-ma-digit-argument)
 
-;;;; Windows
+;;; Emacs state
 
-(hel-keymap-global-set :state 'normal
+(hel-keymap-global-set :state 'emacs
+  ":"   #'execute-extended-command
+  "] b" #'next-buffer
+  "[ b" #'previous-buffer
+  ;; Scrolling
+  "C-b" #'hel-scroll-page-up
+  "C-f" #'hel-scroll-page-down
+  "C-d" #'hel-scroll-down
+  "C-u" #'hel-scroll-up
+  "C-e" #'hel-scroll-line-down
+  "C-y" #'hel-scroll-line-up
+  "z z" '("scroll to eye level" . hel-scroll-line-to-eye-level)
+  "z t" '("scroll to top" . hel-scroll-line-to-top)
+  "z b" '("scroll to bottom" . hel-scroll-line-to-bottom))
+
+;;; C-w keys
+
+(hel-keymap-global-set :state '(normal emacs)
   "C-w" 'hel-window-map)
+
+(hel-keymap-global-set
+  "C-c w" 'hel-window-map)
 
 (hel-keymap-set hel-window-map
   ;; windows
-  "RET" #'same-window-prefix
-  "n"   #'other-window-prefix
+  "RET" '("open next command in same window" . same-window-prefix)
+  "n"   '("open next command in other window" . other-window-prefix)
   "s"   '("split window horizontally" . hel-window-split)
   "v"   '("split window vertically" . hel-window-vsplit)
   "S"   '("split root window horizontally" . hel-root-window-split)
   "V"   '("split root window vertically" . hel-root-window-vsplit)
   "c"   '("close window" . hel-window-delete)
-  "o"   '("close other windows" . delete-other-windows)
-  "p"   '("pin buffer to window" . toggle-window-dedicated)
+  "o"   '("close all other windows" . delete-other-windows)
 
-  "w"   #'other-window
-  "h"   #'hel-window-left
-  "j"   #'hel-window-down
-  "k"   #'hel-window-up
-  "l"   #'hel-window-right
+  "w"   '("goto other window" . other-window)
+  "h"   '("goto window left" . windmove-left)
+  "j"   '("goto window down" . windmove-down)
+  "k"   '("goto window up" . windmove-up)
+  "l"   '("goto window right" . windmove-right)
 
-  "H"   #'hel-move-window-left
-  "J"   #'hel-move-window-down
-  "K"   #'hel-move-window-up
-  "L"   #'hel-move-window-right
+  "H"   '("move window left" . hel-move-window-left)
+  "J"   '("move window down" . hel-move-window-down)
+  "K"   '("move window up" . hel-move-window-up)
+  "L"   '("move window right" . hel-move-window-right)
 
   ;; buffers
   "r"   #'revert-buffer
   "d"   #'kill-current-buffer
-  "q"   #'hel-kill-current-buffer-and-window
-  "b"   #'clone-indirect-buffer-other-window
-  "B"   #'hel-clone-indirect-buffer-same-window
+  "q"   '("kill buffer and window" . hel-kill-current-buffer-and-window)
+  "b"   '("indirect buffer in other window" . clone-indirect-buffer-other-window)
+  "B"   '("indirect buffer in this window" . hel-clone-indirect-buffer-same-window)
   "z"   #'bury-buffer ; mnemonics: "z" is the last letter
   "x"   #'scratch-buffer
   ;; xref
-  "g d" #'xref-find-definitions-other-window
+  "g d" #'("find definitions in other window" . xref-find-definitions-other-window)
 
-  ":"   #'hel-execute-extended-command-other-window
-  "C-:" #'hel-execute-extended-command-for-buffer-other-window
-  "M-x" #'hel-execute-extended-command-other-window
-  "M-X" #'hel-execute-extended-command-for-buffer-other-window
+  ":"   '("execute in other window" . hel-execute-extended-command-other-window)
+  "C-:" '("execute for buffer in other window" . hel-execute-extended-command-for-buffer-other-window)
+  "M-x" '("execute in other window" . hel-execute-extended-command-other-window)
+  "M-X" '("execute for buffer in other window" . hel-execute-extended-command-for-buffer-other-window)
 
   ;; Duplicate all keys with ctrl prefix.
   "C-n" #'other-window-prefix
-  "C-s" '("split window horizontally" . hel-window-split)
-  "C-v" '("split window vertically" . hel-window-vsplit)
-  "C-S" '("split root window horizontally" . hel-root-window-split)
-  "C-V" '("split root window vertically" . hel-root-window-vsplit)
-  "C-c" '("close window" . hel-window-delete)
-  "C-o" '("close other windows" . delete-other-windows)
-  "C-p" '("pin buffer to window" . toggle-window-dedicated)
+  "C-s" #'hel-window-split
+  "C-v" #'hel-window-vsplit
+  "C-S" #'hel-root-window-split
+  "C-V" #'hel-root-window-vsplit
+  "C-c" #'hel-window-delete
+  "C-o" #'delete-other-windows
   ;; Jump over windows
   "C-w" #'other-window
-  "C-h" #'hel-window-left
-  "C-j" #'hel-window-down
-  "C-k" #'hel-window-up
-  "C-l" #'hel-window-right
+  "C-h" #'windmove-left
+  "C-j" #'windmove-down
+  "C-k" #'windmove-up
+  "C-l" #'windmove-right
   ;; buffers
   "C-r" #'revert-buffer
   "C-d" #'kill-current-buffer
@@ -411,35 +438,22 @@ use it."
   "C-x" #'scratch-buffer
   "C-z" #'bury-buffer)
 
-;;; Motion state
-
-(hel-keymap-global-set :state 'motion
-  "C-w" 'hel-window-map
-  ":"   #'execute-extended-command
-  "] b" #'next-buffer
-  "[ b" #'previous-buffer
-  ;; Scrolling
-  "C-b" #'hel-smooth-scroll-page-up
-  "C-f" #'hel-smooth-scroll-page-down
-  "C-d" #'hel-smooth-scroll-down
-  "C-u" #'hel-smooth-scroll-up
-  "C-e" #'hel-mix-scroll-line-down
-  "C-y" #'hel-mix-scroll-line-up
-  "z z" #'hel-smooth-scroll-line-to-eye-level
-  "z t" #'hel-smooth-scroll-line-to-top
-  "z b" #'hel-smooth-scroll-line-to-bottom)
+(when (<= 30 emacs-major-version)
+  (hel-keymap-set hel-window-map
+    "p"   '("pin buffer to window" . toggle-window-dedicated)
+    "C-p" #'toggle-window-dedicated))
 
 ;;; Insert state
 
 (hel-keymap-global-set :state 'insert
-  "<escape>" #'hel-normal-state
-  "C-w" #'hel-delete-backward-word)
+  "<escape>" #'hel-normal-state)
 
 ;;; Conditional keybindings
 
 (when hel-want-zz-scroll-to-center
-  (hel-keymap-global-set :state '(normal motion)
-    "z z" #'hel-smooth-scroll-line-to-center))
+  (hel-keymap-global-set :state '(normal emacs)
+    "z z" #'hel-scroll-line-to-center))
 
+;;; .
 (provide 'hel-keybindings)
 ;;; hel-keybindings.el ends here

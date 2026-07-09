@@ -1,6 +1,6 @@
 ;;; el-job-old.el --- Contrived way to call a function using all CPU cores -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2024-2025 Free Software Foundation, Inc.
+;; Copyright (C) 2024-2026 Free Software Foundation, Inc.
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -838,6 +838,13 @@ Safely return nil otherwise, whether or not ID is known."
     (error "el-job-old-is-busy: Passed a job object, but expected only a job ID"))
   (let ((job (gethash id el-job-old--all-jobs)))
     (and job (el-job-old-busy job))))
+
+;;;###autoload
+(define-obsolete-function-alias 'el-job-launch  #'el-job-old-launch      "2.7.0 (2026-01-23)")
+;;;###autoload
+(define-obsolete-function-alias 'el-job-await   #'el-job-old-await       "2.7.0 (2026-01-23)")
+;;;###autoload
+(define-obsolete-function-alias 'el-job-is-busy #'el-job-old-is-busy     "2.7.0 (2026-01-23)")
 
 (provide 'el-job-old)
 

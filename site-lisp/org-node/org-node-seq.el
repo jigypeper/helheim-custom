@@ -1,21 +1,11 @@
-;;; org-node-seq.el --- Experimental way to define node sequences -*- lexical-binding: t; -*-
+;;; org-node-seq.el --- Extension for navigating arbitrary node sequences -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2024-2025 Martin Edström
-;;
-;; This program is free software: you can redistribute it and/or modify
-;; it under the terms of the GNU General Public License as published by
-;; the Free Software Foundation, either version 3 of the License, or
-;; (at your option) any later version.
-;;
-;; This program is distributed in the hope that it will be useful,
-;; but WITHOUT ANY WARRANTY; without even the implied warranty of
-;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-;; GNU General Public License for more details.
-;;
-;; You should have received a copy of the GNU General Public License
-;; along with this program. If not, see <http://www.gnu.org/licenses/>.
+;; Copyright (C) 2024-2026 Martin Edström
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
+
+;; Strictly an extension (core does not depend on this file).
 
 ;; Support programmatically defining node-sequences, based on such things as
 ;; Org tags, time-stamps and file-names.  Then support easily navigating them.
@@ -41,12 +31,14 @@
 (require 'transient)
 (require 'org-node)
 (require 'org-mem)
+(require 'llama)
+(require 'cond-let)
 (defvar org-node-proposed-seq)
 (defvar org-mem--next-message)
 (declare-function org-entry-get-with-inheritance "org")
 (declare-function org-up-heading-or-point-min "org")
 
-;;; Easy wrappers to define a sequence
+;;;; Easy wrappers to define a sequence
 
 ;;;###autoload
 (defun org-node-seq-def-on-any-sort-by-property
@@ -65,7 +57,7 @@ For KEY, NAME and CAPTURE, see `org-node-seq-defs'."
                       (cons (concat sortstr " " (org-mem-entry-title node))
                             (org-mem-entry-id node)))))
     :whereami (lambda ()
-                (when-let* ((sortstr (org-entry-get nil ,prop t))
+                (when-let ((sortstr (org-entry-get nil ,prop t))
                             (node (org-node-at-point)))
                   (concat sortstr " " (org-mem-entry-title node))))
     :prompter (lambda (key)
@@ -156,7 +148,7 @@ YYYY-MM-DD format, e.g. \"2024-01-31.org\"."
                            (sortstr (file-name-base path)))
                       (cons sortstr path))))
     :whereami (lambda ()
-                (let ((file-name (org-mem--truename-maybe buffer-file-name)))
+                (let ((file-name (org-mem-file-known-p buffer-file-name)))
                   (when (string-prefix-p ,dir file-name)
                     (file-name-base file-name))))
     :prompter (lambda (key)
@@ -173,7 +165,7 @@ YYYY-MM-DD format, e.g. \"2024-01-31.org\"."
                  (org-node-create sortstr (org-id-new) key)))))
 
 
-;;; Helpers to use in a seq definition
+;;;; Helpers to use in a seq definition
 
 ;;;###autoload
 (defun org-node-seq-try-goto-id (id)
@@ -210,7 +202,7 @@ The latter uses a sloppy algorithm so not all formats work, see
           (match-string 0 clipped-name)
         ;; Even in a non-daily file, pretend it is a daily if possible,
         ;; to allow entering the sequence at a more relevant date
-        (when-let* ((stamp (org-node-extract-file-name-datestamp path)))
+        (when-let ((stamp (org-node-extract-file-name-datestamp path)))
           (org-node-seq-extract-ymd stamp org-node-file-timestamp-format))))))
 
 ;; TODO: Handle %s, %V, %y...  is there a library?
@@ -382,9 +374,37 @@ nothing."
                 (lambda (item1 item2)
                   (string> (car item1) (car item2)))))))))
 
+;; TODO: Could the :creator just check if the buffer is unmodified and empty?
+;;       But possible pitfall that the user may have important stuff in undo.
+(defun org-node-seq--kill-blank-unsaved-buffers (&rest _)
+  "Kill buffers created by org-node that have always been blank.
+
+This exists to allow you to create a node, especially a journal note for
+today via package \"org-node-seq\", change your mind, do an `undo' to
+empty the buffer, then browse to the previous day\\='s note.  When later
+you want to create today\\='s note after all, the seq\\='s :creator
+function should be made to run again, but it will not do so if the
+buffer already exists, so the buffer stays blank.  Thus this hook."
+  (unless (minibufferp)
+    (dolist (buf org-node--new-unsaved-buffers)
+      (if (or (not (buffer-live-p buf))
+              (file-exists-p (buffer-file-name buf)))
+          ;; Stop checking the buffer
+          (setq org-node--new-unsaved-buffers
+                (delq buf org-node--new-unsaved-buffers))
+        (with-current-buffer buf
+          (when (and (not (get-buffer-window buf t))
+                     (not (buffer-modified-p))
+                     (string-blank-p (buffer-string)))
+            (when buffer-auto-save-file-name
+              ;; Hopefully throw away a stale autosave
+              ;; since its existence annoys the user on re-creating the file
+              (do-auto-save nil t))
+            (kill-buffer buf)))))))
+
 (defun org-node-seq--jump (key)
   "Prompt for and jump to an entry in node seq identified by KEY."
-  (org-node--kill-blank-unsaved-buffers)
+  (org-node-seq--kill-blank-unsaved-buffers)
   (require 'org)
   (let* ((seq (cdr (assoc key org-node-seqs)))
          (sortstr (funcall (plist-get seq :prompter) key))
@@ -451,7 +471,7 @@ Unlike `org-node-proposed-seq', does not need to revert to nil.")
 (defun org-node-seq-capture-target ()
   "Experimental."
   (org-node-cache-ensure)
-  (org-node--kill-blank-unsaved-buffers)
+  (org-node-seq--kill-blank-unsaved-buffers)
   (let ((key (or org-node-seq--current-key
                  (let* ((valid-keys (mapcar #'car org-node-seq-defs))
                         (elaborations
@@ -489,7 +509,7 @@ DEF is a seq-def from `org-node-seq-defs'."
               if (functionp elt)
               collect (org-node--ensure-compiled elt)
               else collect elt)
-     (cl-loop for node in (org-mem-all-id-nodes)
+     (cl-loop for node in (org-node-all-filtered-nodes)
               as result = (funcall classifier node)
               if (listp (car result))
               nconc result into items
@@ -560,9 +580,6 @@ This permits \\[org-node-seq-dispatch] to work."
       (progn
         (org-node-cache-ensure t)
         (org-node-seq--reset)
-        ;; FIXME: A new node (cached w `org-mem-updater-ensure-id-node-at-point-known')
-        ;;        eventually disappears from cache if its buffer is never
-        ;;        saved, and then the node seq stops working
         (add-hook 'org-node-creation-hook        #'org-node-seq--add-item)
         (add-hook 'org-mem-post-full-scan-functions #'org-node-seq--reset 50)
         ;; Put ourselves in front of org-roam-dailies unhygienic hook.
@@ -625,6 +642,9 @@ not exist."
             (concat org-mem--next-message
                     (format " + %.2fs caching org-node-seqs"
                             (float-time (time-since T))))))))
+
+
+;;;; Transient menu
 
 (defun org-node-seq--add-to-dispatch (key name)
   "Use KEY and NAME to add a sequence to the Transient menu."
@@ -705,3 +725,16 @@ not exist."
 (provide 'org-node-seq)
 
 ;;; org-node-seq.el ends here
+
+;; Local Variables:
+;; checkdoc-spellcheck-documentation-flag: nil
+;; checkdoc-verb-check-experimental-flag: nil
+;; emacs-lisp-docstring-fill-column: 72
+;; read-symbol-shorthands: (("and$"      . "cond-let--and$")
+;;                          ("and>"      . "cond-let--and>")
+;;                          ("and-let"   . "cond-let--and-let")
+;;                          ("if-let"    . "cond-let--if-let")
+;;                          ("when$"     . "cond-let--when$")
+;;                          ("when-let"  . "cond-let--when-let")
+;;                          ("while-let" . "cond-let--while-let"))
+;; End:

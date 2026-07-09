@@ -1,6 +1,6 @@
 ;;; el-job-test.el --- Test suite -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2024-2025 Free Software Foundation, Inc.
+;; Copyright (C) 2024-2026 Free Software Foundation, Inc.
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -21,8 +21,98 @@
 (require 'map)
 (require 'subr-x)
 (require 'cl-lib)
-(require 'el-job-old-child)
+(require 'el-job)
 (require 'el-job-old)
+
+;; NOTE: This does not work in test suite, so test this manually!
+(defun test-it-preserves-order-of-elements ()
+  (let ((nonsense '("foo" "bar" "baz"
+                    "qux" "quux" "quuux" "quuuux"
+                    "bazola" "ztesch"
+                    "foo" "bar" "thud" "grunt"
+                    "foo" "bar" "bletch"
+                    "foo" "bar" "fum"
+                    "fred" "jim" "sheila" "barney"
+                    "flarp"
+                    "xyzzy"
+                    "fnord"
+                    "zxc" "spqr" "wombat"
+                    "shme"
+                    "foo" "bar" "baz" "bongo"
+                    "spam" "eggs"
+                    "snork"
+                    "foo" "bar" "zot"
+                    "blarg" "wibble"
+                    "toto" "titi" "tata" "tutu"
+                    "pippo" "pluto" "paperino"
+                    "aap" "noot" "mies"
+                    "oogle" "foogle" "boogle"
+                    "zork" "gork" "bork")))
+    (equal (mapcar #'upcase nonsense)
+           (el-job-parallel-mapcar #'upcase nonsense))))
+
+(cl-defun test-split-optimally (items n &optional (table (make-hash-table :test 'equal)))
+  (let ((sublists (el-job-ng--split-optimally items n table)))
+    (should (equal items (apply 'append sublists)))
+    (should-not (> (length sublists) n))
+    (should-not (memq nil sublists))
+    sublists))
+
+(defun test-split-evenly (items n &optional _)
+  (let ((sublists (el-job-ng--split-evenly items n)))
+    (should (equal items (apply 'append sublists)))
+    (should-not (> (length sublists) n))
+    (should-not (memq nil sublists))
+    sublists))
+
+(ert-deftest splitting ()
+  (should-error (test-split-evenly '(1 2 3) 0))
+  (should-error (test-split-optimally '(1 2 3) 0))
+  (test-split-optimally nil 5)
+
+  (test-split-evenly '(1 2 3 4 5 6) 4) ;; Even, lesser even
+  (test-split-evenly '(1 2 3 4 5 6) 5) ;; Even, lesser odd
+  (test-split-evenly '(1 2 3 4 5 6) 6) ;; Even, equal
+  (test-split-evenly '(1 2 3 4 5 6) 7) ;; Even, greater odd
+  (test-split-evenly '(1 2 3 4 5 6) 8) ;; Even, greater even
+  (test-split-evenly '(1 2 3 4 5) 3) ;; Odd, lesser odd
+  (test-split-evenly '(1 2 3 4 5) 4) ;; Odd, lesser even
+  (test-split-evenly '(1 2 3 4 5) 5) ;; Odd, equal
+  (test-split-evenly '(1 2 3 4 5) 6) ;; Odd, greater even
+  (test-split-evenly '(1 2 3 4 5) 7) ;; Odd, greater odd
+
+  (let* ((alist ;; Simulated benchmarks
+          (cl-loop
+           for i below 50
+           collect (cons (format "filename-%d.org" i)
+                         (seconds-to-time
+                          ;; (/ (random 1000) 100.0)
+                          (- (expt 1.2 (/ 10.0 (1+ (random 100)))) 1)
+                          ;; (/ 4.0 (1+ (random 10)))
+                          ))))
+         (items (map-keys alist))
+         (big-table (map-into (take 100 alist) '(hash-table :test equal)))
+         (tiny-table (map-into (take 10 alist) '(hash-table :test equal)))
+         (empty-table (make-hash-table :test #'equal)))
+    ;; (cl-loop for sublist in (test-split-optimally items 15 big-table)
+    ;;          collect (cons (gethash (car sublist) big-table) sublist))
+    (should (>= 15 (length (test-split-optimally items 15 big-table))))
+    (should (>= 15 (length (test-split-optimally items 15 tiny-table))))
+    (should (= 5 (length (test-split-optimally (take 5 items) 15 big-table))))
+    (should (= 5 (length (test-split-optimally (take 5 items) 15 tiny-table))))
+    (should (= 5 (length (test-split-optimally (take 5 items) 15 empty-table)))))
+
+  ;; (let ((table (map-into (list "a" (seconds-to-time 0.00003214)
+  ;;                              "b" (seconds-to-time 2.002)
+  ;;                              "c" (seconds-to-time 0.5)
+  ;;                              "d" (seconds-to-time 0.5)
+  ;;                              "e" (seconds-to-time 0.5)
+  ;;                              "f" (seconds-to-time 0.5)
+  ;;                              "g" (seconds-to-time 0.5)
+  ;;                              "h" (seconds-to-time 0.05))
+  ;;                        '(hash-table :test equal)))))
+
+  )
 
 (ert-deftest el-job-old--split-optimally ()
   ;; All benchmarks at zero

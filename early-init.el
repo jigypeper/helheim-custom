@@ -14,27 +14,29 @@
 ;;; Code:
 ;; In case of error start Emacs from command line with `--debug-init' key, or
 ;; uncomment:
-;;-----------------------
-;; (setq init-file-debug
+;;------------------------
+;; (setq init-file-debug t
 ;;       debug-on-error t
 ;;       debug-on-quit t)
-;;-----------------------
+;;------------------------
 
 ;;; Garbage collector
 
-(if noninteractive                      ; in CLI sessions
-    (setq gc-cons-threshold 134217728)  ; 128mb
+(if noninteractive ;; in CLI sessions
+    (setq gc-cons-threshold (* 128 1024 1024)) ; 128mb
   ;; Else, disable garbage collection during startup.
-  (setq-default gc-cons-threshold most-positive-fixnum))
+  (setq-default gc-cons-threshold most-positive-fixnum
+                gc-cons-percentage 1.0))
 
 ;; Enable garbage collection after start up.
 (add-hook 'emacs-startup-hook 'helheim--restore-original-gc-values 105)
 
 (defun helheim--restore-original-gc-values ()
-  "Reset `gc-cons-threshold' without user's config."
-  (when (= (default-value 'gc-cons-threshold)
-           most-positive-fixnum)
-    (setq-default gc-cons-threshold (* 16 1024 1024)))) ; 16mb
+  "Reset `gc-cons-threshold' and `gc-cons-percentage'."
+  (when (= (default-value 'gc-cons-threshold) most-positive-fixnum)
+    (setq-default gc-cons-threshold (* 16 1024 1024))) ; 16mb
+  (when (= (default-value 'gc-cons-percentage) 1.0)
+    (setq-default gc-cons-percentage 0.1)))
 
 ;;; Native compilation and Byte compilation
 
@@ -80,8 +82,13 @@
 
 ;;; Performance
 
-;; Font compacting can be very resource-intensive, especially when rendering
-;; icon fonts on Windows. This will increase memory usage.
+(setq process-adaptive-read-buffering nil)
+
+;; Increase how much is read from processes in a single chunk
+(setq read-process-output-max (* 2 1024 1024)) ; 1024kb
+
+;; Font compacting can be very resource-intensive.
+;; Disable it in cost of increasing memory usage.
 (setq inhibit-compacting-font-caches t)
 
 (when (and (not (daemonp))
@@ -142,7 +149,7 @@ This variable holds a list of Emacs UI features that can be enabled:
 ;;       icon-title-format  helheim-emacs-frame-title-format)
 
 ;; Disable startup screens and messages
-(setq inhibit-splash-screen t)
+(setq inhibit-startup-screen t)
 
 ;; We intentionally avoid calling `menu-bar-mode', `tool-bar-mode', and
 ;; `scroll-bar-mode' because manipulating frame parameters can trigger or queue
@@ -198,9 +205,6 @@ This variable holds a list of Emacs UI features that can be enabled:
 ;; Do not load built-in package manager.
 (setq package-enable-at-startup nil)
 
-;; Prevent built-in seq from loading (Emacs 29.1 has seq 2.23, but we need 2.24+ from ELPA)
-(setq package--builtin-versions (assq-delete-all 'seq package--builtin-versions))
-
 ;; Ensure that, if the user does want package.el, it is configured correctly.
 (setq package-archives '(("melpa"  . "https://melpa.org/packages/")
                          ("gnu"    . "https://elpa.gnu.org/packages/")
@@ -212,8 +216,7 @@ This variable holds a list of Emacs UI features that can be enabled:
 ;;; use-package
 
 ;; Explicit is better than implicit.
-(setq use-package-always-ensure nil ; Do not auto `:ensure'.
-      use-package-hook-name-suffix nil) ; Specify the full hook name.
+(setq use-package-always-ensure nil) ; Do not auto `:ensure'.
 
 (setq use-package-enable-imenu-support t)
 
@@ -248,28 +251,37 @@ cookies.")
       custom-theme-directory (expand-file-name "themes/" helheim-root-directory)
       custom-file            (expand-file-name "custom.el" helheim-root-directory))
 
-;; Load "custom.el" file.
-(add-hook 'after-init-hook (lambda ()
-                             (let ((inhibit-message t))
-                               (when (file-exists-p custom-file)
-                                 (load-file custom-file)))))
+;; Don't compile content of `user-emacs-directory' in `prepare-user-lisp'
+;; function. It is called too early when dependencies are not installed yet.
+;; And it will be compiled later by `compile-angel'.
+(setq user-lisp-auto-scrape nil)
 
-;; Local variables:
-;; byte-compile-warnings: (not obsolete free-vars)
-;; End:
-;;; early-init.el ends here
+(when (< emacs-major-version 31)
+  (load (expand-file-name "prepare-user-lisp.el" user-lisp-directory) nil t)
+  (prepare-user-lisp (not user-lisp-auto-scrape)))
 
-;;; Offline mode: Load packages from site-lisp
+;;; Offline mode: load packages from site-lisp/
+;;
+;; All packages are vendored here for air-gapped / offline use.
+;; This block must come AFTER user-lisp-directory is set above so that
+;; site-lisp packages don't shadow user-lisp files.
 (let ((site-lisp-dir (expand-file-name "site-lisp/" helheim-root-directory)))
   (when (file-directory-p site-lisp-dir)
     (dolist (pkg (directory-files site-lisp-dir t "^[^.]"))
       (when (file-directory-p pkg)
         (add-to-list 'load-path pkg)
         ;; Load autoloads if they exist
-        (let ((autoloads (expand-file-name (concat (file-name-nondirectory pkg) "-autoloads.el") pkg)))
+        (let ((autoloads (expand-file-name
+                          (concat (file-name-nondirectory pkg) "-autoloads.el")
+                          pkg)))
           (when (file-exists-p autoloads)
             (load autoloads nil t)))
-        ;; Add subdirectories (e.g., org-contrib/lisp)
+        ;; Add subdirectories (e.g. org-contrib/lisp, magit/lisp, casual/lisp)
         (dolist (subdir (directory-files pkg t "^[^.]"))
           (when (file-directory-p subdir)
             (add-to-list 'load-path subdir)))))))
+
+;; Local variables:
+;; byte-compile-warnings: (not obsolete free-vars)
+;; End:
+;;; early-init.el ends here

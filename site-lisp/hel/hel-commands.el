@@ -1,41 +1,48 @@
-;;; hel-commands.el --- Hel commands -*- lexical-binding: t; -*-
+;;; hel-commands.el --- Interactive commands -*- lexical-binding: t -*-
 ;;
-;; Copyright © 2025 Yuriy Artemyev
+;; Copyright © 2025-2026 Yuriy Artemyev
 ;;
 ;; Author: Yuriy Artemyev <anuvyklack@gmail.com>
 ;; Maintainer: Yuriy Artemyev <anuvyklack@gmail.com>
-;; Version: 0.0.1
+;; Version: 0.12.0
 ;; Homepage: https://github.com/anuvyklack/hel
-;; Package-Requires: ((emacs "29.1"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
-;;; Commentary:
-;;
-;;  Hel commands
-;;
 ;;; Code:
 
-(require 's)
+(eval-when-compile
+  (require 'cl-lib)
+  (require 'hel-macros))
 (require 'dash)
 (require 'pcre2el)
-(require 'cl-lib)
 (require 'thingatpt)
-(require 'hel-common)
-(require 'hel-core)
+(require 'hel-vars)
+(require 'hel-lib)
 (require 'hel-multiple-cursors-core)
+(require 'hel-core)
 (require 'hel-search)
 (require 'avy)
 
 ;; ESC in normal state
 (hel-define-command hel-normal-state-escape ()
-  "Command for ESC key in Hel Normal state."
+  (format "Command for ESC key in Hel Normal state.
+Execute in order:
+- Disable extending selection (enabled with %s command);
+- Deactivate the region;
+- Disable search results highlighting."
+          (propertize "v" 'face 'help-key-binding))
   :multiple-cursors t
   (interactive)
   (cond (hel--extend-selection
          (hel-extend-selection -1))
-        (t
-         (deactivate-mark))))
+        ((region-active-p)
+         (deactivate-mark))
+        (hel-search--session
+         (hel-search-session-cleanup hel-search--session)
+         (setq hel-search--session nil
+               hel-search--current nil
+               hel-search--total nil))))
 
 ;;; Motions
 
@@ -43,7 +50,7 @@
 (hel-define-command hel-backward-char (count)
   "Move backward COUNT chars."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
   (hel-maybe-deactivate-mark)
   (backward-char count))
@@ -52,7 +59,7 @@
 (hel-define-command hel-forward-char (count)
   "Move forward COUNT chars."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
   (hel-maybe-deactivate-mark)
   (forward-char count))
@@ -63,9 +70,9 @@
 If both linewise selection (`x' key) and extending selection (`v' key)
 are active — works like `hel-expand-line-selection'."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
-  (if (and hel--extend-selection (hel-logical-lines-p))
+  (if (and hel--extend-selection (hel-linewise-selection-p))
       (hel-expand-line-selection count)
     ;; else
     (hel-maybe-deactivate-mark)
@@ -80,7 +87,7 @@ are active — works like `hel-expand-line-selection'."
 If both linewise selection (`x' key) and extending selection (`v' key)
 are active — works like `hel-expand-line-selection-backward'."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
   (hel-next-line (- count)))
 
@@ -88,7 +95,7 @@ are active — works like `hel-expand-line-selection-backward'."
 (hel-define-command hel-forward-word-start (count)
   "Move to the COUNT-th next word start."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
   (hel--forward-word-start 'hel-word count))
 
@@ -96,7 +103,7 @@ are active — works like `hel-expand-line-selection-backward'."
 (hel-define-command hel-forward-WORD-start (count)
   "Move to the COUNT-th next WORD start."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
   (hel--forward-word-start 'hel-WORD count))
 
@@ -104,7 +111,7 @@ are active — works like `hel-expand-line-selection-backward'."
 (hel-define-command hel-backward-word-start (count)
   "Move to the COUNT-th previous word start."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
   (hel--backward-word-start 'hel-word count))
 
@@ -112,7 +119,7 @@ are active — works like `hel-expand-line-selection-backward'."
 (hel-define-command hel-backward-WORD-start (count)
   "Move to the COUNT-th previous WORD start."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
   (hel--backward-word-start 'hel-WORD count))
 
@@ -120,7 +127,7 @@ are active — works like `hel-expand-line-selection-backward'."
 (hel-define-command hel-forward-word-end (count)
   "Move to the COUNT-th next word end."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
   (hel--forward-word-end 'hel-word count))
 
@@ -128,7 +135,7 @@ are active — works like `hel-expand-line-selection-backward'."
 (hel-define-command hel-forward-WORD-end (count)
   "Move COUNT-th next WORD end."
   :multiple-cursors t
-  :merge-selections 'extend-selection
+  :merge-selections hel--extend-selection
   (interactive "p")
   (hel--forward-word-end 'hel-WORD count))
 
@@ -141,7 +148,7 @@ accessible part of the buffer.
 Push mark at previous position, unless extending selection."
   :multiple-cursors nil
   (interactive "P")
-  (hel-delete-all-fake-cursors)
+  (hel-disable-multiple-cursors-mode)
   (hel-push-point)
   (hel-maybe-deactivate-mark)
   (if num
@@ -156,16 +163,18 @@ Push mark at previous position, unless extending selection."
     (recenter 0)))
 
 ;; G
-(hel-define-command hel-end-of-buffer ()
-  "Move point the end of the buffer."
+(hel-define-command hel-end-of-buffer (count)
+  "Move point to the COUNT line, or to the end of the buffer."
   :multiple-cursors nil
-  (interactive)
-  (hel-delete-all-fake-cursors)
+  (interactive "P")
+  (hel-disable-multiple-cursors-mode)
   (hel-push-point)
   (hel-maybe-deactivate-mark)
-  (goto-char (point-max)))
+  (if count
+      (goto-line (prefix-numeric-value count))
+    (goto-char (point-max))))
 
-;; gs
+;; gh
 (hel-define-command hel-beginning-of-line-command ()
   "Move point to beginning of current line.
 Use visual line when `visual-line-mode' is active."
@@ -176,7 +185,7 @@ Use visual line when `visual-line-mode' is active."
   (hel-set-region (if hel--extend-selection (mark) (point))
                   (hel-beginning-of-line)))
 
-;; gh
+;; gs
 (hel-define-command hel-first-non-blank ()
   "Move point to beginning of current line skipping indentation.
 Use visual line when `visual-line-mode' is active."
@@ -207,32 +216,29 @@ Use visual line when `visual-line-mode' is active."
           this-command 'next-line)))
 
 ;; }
-(hel-define-command hel-forward-paragraph (count &optional move-to-end?)
+(hel-define-command hel-forward-paragraph (count &optional move-to-bound?)
   "Select to the beginning of the COUNT-th next paragraph."
   :multiple-cursors t
   :merge-selections t
   (interactive "p")
   (let ((thing 'hel-paragraph)
-        (initial-pos (point))
         (dir (hel-sign count)))
     (hel-restore-region-on-error
-      ;; (if (eolp) (forward-char))
-      (hel-restore-newline-at-eol)
-      (if (hel-end-of-buffer-p dir)
-          (user-error (if (< dir 0) "Beginning of buffer" "End of buffer"))
-        ;; else
-        (hel-push-point initial-pos)
-        (hel-set-region (if hel--extend-selection (mark) (point))
-                        (progn
-                          (cond ((and (< dir 0) move-to-end?)
-                                 (hel-forward-end-of-thing thing count))
-                                ((and (< 0 dir) (not move-to-end?))
-                                 (hel-forward-beginning-of-thing thing count))
-                                (t
-                                 (forward-thing thing count)))
-                          (point))
-                        dir :adjust)
-        (hel-reveal-point-when-on-top)))))
+      (if (< dir 0)
+          (when (bobp) (user-error "Beginning of buffer"))
+        (when (eobp) (user-error "End of buffer")))
+      (hel-push-point (point))
+      (hel-set-region (if hel--extend-selection (mark) (point))
+                      (progn
+                        (cond ((and (< dir 0) move-to-bound?)
+                               (hel-forward-end-of-thing thing count))
+                              ((and (< 0 dir) (not move-to-bound?))
+                               (hel-forward-beginning-of-thing thing count))
+                              (t
+                               (forward-thing thing count)))
+                        (point))
+                      (unless hel--extend-selection dir))
+      (hel-reveal-point-when-on-top))))
 
 ;; {
 (hel-define-command hel-backward-paragraph (count)
@@ -381,7 +387,7 @@ backward and jump to new top location."
             (-> (avy--regex-candidates avy-goto-word-0-regexp
                                        (point) (window-end nil t))
                 (avy-process)))
-      (hel-delete-all-fake-cursors)
+      (hel-disable-multiple-cursors-mode)
       (hel-push-point orig-point)
       (hel-set-region (if hel--extend-selection (mark) (point))
                       (progn (forward-thing 'hel-word)
@@ -398,7 +404,7 @@ backward and jump to new top location."
                                        (window-start) (point))
                 (nreverse)
                 (avy-process)))
-      (hel-delete-all-fake-cursors)
+      (hel-disable-multiple-cursors-mode)
       (hel-push-point orig-point)
       (if hel--extend-selection
           (hel-set-region (mark) (point))
@@ -415,7 +421,7 @@ backward and jump to new top location."
     (when (let ((avy-all-windows nil))
             (-> (avy--regex-candidates "[^ \r\n\t]+" (point) (window-end nil t))
                 (avy-process)))
-      (hel-delete-all-fake-cursors)
+      (hel-disable-multiple-cursors-mode)
       (hel-push-point orig-point)
       (hel-set-region (if hel--extend-selection (mark) (point))
                       (progn (forward-thing 'hel-WORD)
@@ -431,7 +437,7 @@ backward and jump to new top location."
             (-> (avy--regex-candidates "[^ \r\n\t]+" (window-start) (point))
                 (nreverse)
                 (avy-process)))
-      (hel-delete-all-fake-cursors)
+      (hel-disable-multiple-cursors-mode)
       (hel-push-point orig-point)
       (if hel--extend-selection
           (hel-set-region (mark) (point))
@@ -454,10 +460,10 @@ to the chosen one."
                            (hel-collect-positions)
                            (avy-process)))))
               ((natnump pos)))
-    (hel-delete-all-fake-cursors)
+    (hel-disable-multiple-cursors-mode)
     (hel-push-point)
     (if hel--extend-selection
-        (let ((lines? (hel-logical-lines-p)))
+        (let ((lines? (hel-linewise-selection-p)))
           (hel-set-region (mark) pos)
           (if lines? (hel-expand-selection-to-full-lines)))
       ;; else
@@ -482,32 +488,36 @@ to the chosen one."
 (hel-define-command hel-insert ()
   "Switch to Insert state before region."
   :multiple-cursors nil
-  (interactive)
-  (hel-with-each-cursor
-    (hel-ensure-region-direction -1))
+  (interactive "*")
+  (when (use-region-p)
+    (hel-with-each-cursor
+      (hel-ensure-region-direction -1)))
   (hel-insert-state 1))
 
 ;; a
 (hel-define-command hel-append ()
   "Switch to Insert state after region."
   :multiple-cursors nil
-  (interactive)
-  (hel-with-each-cursor
-    (hel-ensure-region-direction 1))
+  (interactive "*")
+  (when (use-region-p)
+    (hel-with-each-cursor
+      (hel-ensure-region-direction 1)
+      (when (hel-linewise-selection-p)
+        (backward-char))))
   (hel-insert-state 1))
 
 ;; I
 (hel-define-command hel-insert-line ()
   "Switch to insert state at beginning of current line."
   :multiple-cursors nil
-  (interactive)
+  (interactive "*")
   (hel--insert-or-append-on-line -1))
 
 ;; A
 (hel-define-command hel-append-line ()
   "Switch to Insert state at the end of the current line."
   :multiple-cursors nil
-  (interactive)
+  (interactive "*")
   (hel--insert-or-append-on-line 1))
 
 (defun hel--insert-or-append-on-line (direction)
@@ -520,15 +530,14 @@ depending on DIRECTION."
       (let ((current-line 0))
         (-each (hel-all-fake-cursors :sort)
           (lambda (cursor)
-            (let ((line (line-number-at-pos
-                         (overlay-get cursor 'point))))
-              (if (eql line current-line)
+            (let ((line (line-number-at-pos (overlay-get cursor 'point))))
+              (if (= line current-line)
                   (hel--delete-fake-cursor cursor)
                 (setq current-line line))))))))
   (hel-with-each-cursor
-    (if (natnump direction)
-        (hel-end-of-line)
-      (hel-first-non-blank))
+    (if (< direction 0)
+        (hel-first-non-blank)
+      (hel-end-of-line))
     (set-marker (mark-marker) (point)))
   (hel-insert-state 1))
 
@@ -536,10 +545,12 @@ depending on DIRECTION."
 (hel-define-command hel-open-below ()
   "Open new line below selection."
   :multiple-cursors nil
-  (interactive)
+  (interactive "*")
   (hel-with-each-cursor
     (when (use-region-p) (hel-ensure-region-direction 1))
-    (move-end-of-line nil)
+    (if (hel-linewise-selection-p)
+        (backward-char)
+      (move-end-of-line nil))
     (newline-and-indent)
     (set-marker (mark-marker) (point)))
   (hel-insert-state 1))
@@ -548,7 +559,7 @@ depending on DIRECTION."
 (hel-define-command hel-open-above ()
   "Open new line above selection."
   :multiple-cursors nil
-  (interactive)
+  (interactive "*")
   (hel-with-each-cursor
     (when (use-region-p) (hel-ensure-region-direction -1))
     (move-beginning-of-line nil)
@@ -563,9 +574,11 @@ depending on DIRECTION."
   "Add COUNT blank lines below selection."
   :multiple-cursors t
   (interactive "p")
-  (hel-save-linewise-selection
-    (hel-ensure-region-direction 1)
-    (hel--forward-line 1)
+  (hel-save-region
+    (when (use-region-p)
+      (hel-ensure-region-direction 1))
+    (unless (hel-linewise-selection-p 1)
+      (hel--forward-line 1))
     (newline count)))
 
 ;; [ SPC
@@ -574,21 +587,24 @@ depending on DIRECTION."
   :multiple-cursors t
   (interactive "p")
   (hel-save-region
-    (hel-ensure-region-direction -1)
+    (when (use-region-p)
+      (hel-ensure-region-direction -1))
     (hel--beginning-of-line)
     (newline count)))
 
 ;; c
 (hel-define-command hel-change ()
-  "Delete region and enter Insert state."
+  "Delete region and switch to Insert state."
   :multiple-cursors nil
-  (interactive)
+  (interactive "*")
   (hel-with-each-cursor
     (cond ((use-region-p)
-           (let ((logical-lines? (hel-logical-lines-p))
+           (let ((logical-lines? (hel-linewise-selection-p))
                  (visual-lines? (hel-visual-lines-p)))
              (kill-region nil nil t)
              (cond (logical-lines?
+                    (newline)
+                    (backward-char)
                     (indent-according-to-mode))
                    (visual-lines?
                     (insert " ")
@@ -609,36 +625,32 @@ depending on DIRECTION."
 ;; } => {|}
 ;; d
 (hel-define-command hel-cut (count)
-  "Kill (cut) text in region. I.e. delete text and put it in the `kill-ring'.
-If no selection — delete COUNT chars before point."
+  "Kill (cut) text in selection — i.e. delete it and put in the `kill-ring'.
+Without selection delete COUNT characters before point."
   :multiple-cursors t
+  :merge-selections t
   (interactive "*p")
-  (when (hel-logical-lines-p)
-    (hel-restore-newline-at-eol))
-  (cond ((use-region-p)
-         (kill-region nil nil t))
-        (t
-         (delete-char (- count))))
+  (if (use-region-p)
+      (kill-region nil nil t)
+    (delete-char (- count)))
   (hel-extend-selection -1))
 
 ;; D
 (hel-define-command hel-delete (count)
   "Delete text in region, without modifying the `kill-ring'.
-If no selection — delete COUNT chars after point."
+Without selection delete COUNT characters after point."
   :multiple-cursors t
+  :merge-selections t
   (interactive "*p")
-  (when (hel-logical-lines-p)
-    (hel-restore-newline-at-eol))
-  (cond ((use-region-p)
-         (delete-region (region-beginning) (region-end)))
-        (t
-         (delete-char count)))
+  (if (use-region-p)
+      (delete-region (region-beginning) (region-end))
+    (delete-char count))
   (hel-extend-selection -1))
 
 ;; C-w in insert state
 (hel-define-command hel-delete-backward-word ()
   :multiple-cursors t
-  (interactive)
+  (interactive "*")
   (delete-region (point) (progn
                            (hel-backward-word-start 1)
                            (point))))
@@ -647,7 +659,7 @@ If no selection — delete COUNT chars after point."
 (hel-define-command hel-undo ()
   "Undo."
   :multiple-cursors nil
-  (interactive)
+  (interactive "*")
   ;; Deactivate mark to trigger global undo instead of region undo.
   (deactivate-mark)
   (let ((deactivate-mark nil))
@@ -657,7 +669,7 @@ If no selection — delete COUNT chars after point."
 (hel-define-command hel-redo ()
   "Redo."
   :multiple-cursors nil
-  (interactive)
+  (interactive "*")
   ;; Deactivate mark to trigger global undo instead of region undo.
   (deactivate-mark)
   (let ((deactivate-mark nil))
@@ -665,27 +677,34 @@ If no selection — delete COUNT chars after point."
 
 ;; y
 (hel-define-command hel-copy ()
-  "Copy selection into `kill-ring'.
-If there are multiple selections, add each one to the `killed-rectangle'
-unless all selections are identical. You can later paste them with
-`hel-paste-after' (with \\[universal-argument]) or with `yank-rectangle'."
+  (format "Copy selection into `kill-ring'.
+
+With \\[universal-argument] append selection to the last item in the `kill-ring'.
+
+If there are multiple selections and they are not all the same — also
+copy them to the `killed-rectangle'. You can paste them later with %s
+(`hel-paste-after') or `yank-rectangle'.
+
+The copied text is filtered by `filter-buffer-substring' before it is saved
+in the kill ring."
+          (propertize "M-u p" 'face 'help-key-binding))
   :multiple-cursors nil
   (interactive)
-  ;; (unless (use-region-p)
-  ;;   (user-error "No active selection"))
   (when (use-region-p)
+    (setq this-command 'hel-copy)
     (let ((deactivate-mark nil)
-          any?)
+          (kill-fun (pcase current-prefix-arg
+                      ('(4) #'hel--copy-append)
+                      (_    #'kill-new))))
       (hel-with-each-cursor
         (when (use-region-p)
-          (copy-region-as-kill (region-beginning) (if hel--newline-at-eol
-                                                      (1+ (region-end))
-                                                    (region-end)))
-          (setq any? t))
+          (funcall kill-fun (filter-buffer-substring (region-beginning)
+                                                     (region-end))))
         (hel-extend-selection -1))
-      (when any? (message "Copied into kill-ring")))
+      (message "Copied into kill-ring"))
     (hel-maybe-set-killed-rectangle)
-    (hel-pulse-main-region)))
+    (when (called-interactively-p 'interactive)
+      (hel-pulse-main-region))))
 
 (defun hel-maybe-set-killed-rectangle ()
   "Add the latest `kill-ring' entry of each cursor to `killed-rectangle',
@@ -695,13 +714,14 @@ unless they all are equal. You can paste them later with `yank-rectangle'."
                      (-map (lambda (cursor)
                              (car-safe (overlay-get cursor 'kill-ring)))
                            (hel-all-fake-cursors :sort)))))
-      (unless (hel-all-elements-are-equal-p entries)
+      (unless (hel-all-elements-are-the-same-p entries)
         (setq killed-rectangle entries)))))
 
 ;; p
 (hel-define-command hel-paste-after (arg)
   "Paste after selection.
-With \\[universal-argument] invokes `yank-rectangle' instead. See `hel-copy'."
+With \\[universal-argument] paste the last coppied multiple selections from the
+`killed-rectangle' instead."
   :multiple-cursors t
   (interactive "*P")
   (pcase arg
@@ -720,13 +740,18 @@ With \\[universal-argument] invokes `yank-rectangle' instead. See `hel-copy'."
   "Replace just-pasted text with next COUNT element from `kill-ring'."
   :multiple-cursors t
   (interactive "*p")
-  (hel-disable-newline-at-eol)
   (let ((deactivate-mark nil))
-    (let ((yank-pop (or (command-remapping 'yank-pop)
+    (unless (eq last-command 'yank)
+      (setq hel--yank-transform-linewise-selection?
+            (and (use-region-p)
+                 (hel-linewise-selection-p (hel-region-direction)))))
+    (let ((yank-transform-functions (cons #'hel--yank-transform
+                                          yank-transform-functions))
+          (yank-pop (or (command-remapping 'yank-pop)
                         #'yank-pop)))
       (funcall-interactively yank-pop count))
     (if (and (mark t)
-             (/= (point) (mark t)))
+             (/= (point) (mark-marker)))
         (activate-mark)
       (deactivate-mark))))
 
@@ -737,27 +762,51 @@ With \\[universal-argument] invokes `yank-rectangle' instead. See `hel-copy'."
   (interactive "*p")
   (hel-paste-pop (- count)))
 
-;; R
-(hel-define-command hel-replace-with-kill-ring ()
-  "Replace selection content with yanked text from `kill-ring'."
+;; r
+(hel-define-command hel-replace-char (count)
+  "Replace character(s) with one read from the keyboard.
+With an active selection, replace every character in it with the typed
+one. With no selection — replace COUNT characters before point."
   :multiple-cursors t
-  (interactive)
-  (when (use-region-p)
-    (when (hel-string-ends-with-newline (current-kill 0 :do-not-move))
-      (hel-restore-newline-at-eol))
-    (let ((deactivate-mark nil)
-          (dir (hel-region-direction)))
-      (delete-region (region-beginning) (region-end))
-      (cl-letf (((symbol-function 'push-mark) #'hel-push-mark))
-        (yank))
-      (hel-set-region (mark t) (point) dir :adjust)
-      (hel-extend-selection -1))))
+  (interactive "*p")
+  (if (use-region-p)
+      (let ((char (read-char "Replace with: " t))
+            (deactivate-mark nil))
+        (hel-replace-chars (region-beginning) (region-end) char))
+    (hel-read-char-and-replace (max (point-min) (- (point) count))
+                               (point))))
+
+;; R
+(hel-define-command hel-replace-with-kill-ring (count)
+  "Replace selection content with yanked text from `kill-ring'.
+With no selection, temporarily highlight COUNT characters after point,
+read a character, and replace them (like \\[hel-replace-char] but
+forward)."
+  :multiple-cursors t
+  (interactive "*p")
+  (if (use-region-p)
+      (let ((deactivate-mark nil)
+            (dir (hel-region-direction)))
+        (setq hel--yank-transform-linewise-selection?
+              (hel-linewise-selection-p dir))
+        (delete-region (region-beginning) (region-end))
+        (cl-letf ((yank-transform-functions (cons #'hel--yank-transform
+                                                  yank-transform-functions))
+                  ((symbol-function 'push-mark) #'hel-push-mark))
+          (yank))
+        (hel-set-region (mark t) (point) dir)
+        (hel-extend-selection -1)
+        (when (and (derived-mode-p 'prog-mode)
+                   (use-region-p))
+          (indent-region (region-beginning) (region-end))))
+    (hel-read-char-and-replace (point)
+                               (min (point-max) (+ (point) count)))))
 
 ;; J
 (hel-define-command hel-join-line ()
   "Join the selected lines."
   :multiple-cursors t
-  (interactive)
+  (interactive "*")
   (hel-save-region
     (let* ((deactivate-mark nil)
            (region? (use-region-p))
@@ -799,7 +848,7 @@ With \\[universal-argument] invokes `yank-rectangle' instead. See `hel-copy'."
 (hel-define-command hel-invert-case ()
   "Invert case of characters."
   :multiple-cursors t
-  (interactive)
+  (interactive "*")
   (if-let ((region (hel-region)))
       (-let (((beg end) region)
              (deactivate-mark nil))
@@ -809,26 +858,28 @@ With \\[universal-argument] invokes `yank-rectangle' instead. See `hel-copy'."
     (hel-invert-case-in-region (point) (1+ (point)))))
 
 ;; ` or gu
-(hel-define-command hel-downcase ()
+(hel-define-command hel-downcase (count)
   "Convert text in selection to lower case.
-With no selection downcase the character after point."
+With no selection downcase COUNT characters after point."
   :multiple-cursors t
-  (interactive)
+  (interactive "*p")
   (if (use-region-p)
       (let ((deactivate-mark nil))
         (downcase-region (region-beginning) (region-end)))
-    (downcase-region (point) (progn (forward-char) (point)))))
+    (save-excursion
+      (downcase-region (point) (progn (forward-char count) (point))))))
 
 ;; M-` or gU
-(hel-define-command hel-upcase ()
+(hel-define-command hel-upcase (count)
   "Convert text in selection to upper case.
-With no selection upcase the character after point."
+With no selection upcase COUNT characters after point."
   :multiple-cursors t
-  (interactive)
+  (interactive "*p")
   (if (use-region-p)
       (let ((deactivate-mark nil))
         (upcase-region (region-beginning) (region-end)))
-    (upcase-region (point) (progn (forward-char) (point)))))
+    (save-excursion
+      (upcase-region (point) (progn (forward-char count) (point))))))
 
 ;;; Selections
 
@@ -845,32 +896,32 @@ With no selection upcase the character after point."
 
 ;; v
 (hel-define-command hel-extend-selection (arg)
-  "Toggle extending selections.
-If ARG is nil — toggle extending selection.
-If ARG positive number — enable, negative — disable."
+  "Enable or disable extending selections.
+If ARG positive number — enable, negative — disable.
+When called interactively — toggle extending selection."
   :multiple-cursors t
-  (interactive `(,(if hel--extend-selection -1 1)))
-  (pcase arg
-    (-1 (setq hel--extend-selection nil)
-        (unless hel-executing-command-for-fake-cursor
-          (hel-update-cursor)))
-    (_ (setq hel--extend-selection t)
-       (or (region-active-p)
-           (set-mark (point)))
-       (unless hel-executing-command-for-fake-cursor
-         (set-cursor-color (face-attribute 'hel-extend-selection-cursor
-                                           :background))))))
+  (interactive (list (if hel--extend-selection -1 1)))
+  (setq hel--extend-selection (/= arg -1))
+  (when (and hel--extend-selection
+             (not (region-active-p)))
+    (set-mark (point)))
+  (unless hel-executing-command-for-fake-cursor
+    (hel-update-cursor)))
 
 ;; ;
 (hel-define-command hel-collapse-selection ()
   "Deactivate selection."
   :multiple-cursors t
   (interactive)
-  (if hel--extend-selection
-      (progn
-        (hel-disable-newline-at-eol)
-        (set-mark (point)))
-    (deactivate-mark)))
+  (cond (hel--extend-selection
+         (set-mark (point)))
+        ((use-region-p)
+         (deactivate-mark))
+        (hel-search--session
+         (hel-search-session-cleanup hel-search--session)
+         (setq hel-search--session nil
+               hel-search--current nil
+               hel-search--total nil))))
 
 ;; x
 (hel-define-command hel-expand-line-selection (count)
@@ -882,20 +933,20 @@ If ARG positive number — enable, negative — disable."
     (and (hel-expand-selection-to-full-lines motion-dir)
          (cl-callf - count motion-dir))
     (unless (zerop count)
-      (hel-restore-newline-at-eol)
-      (let* ((line (if visual-line-mode 'hel-visual-line 'hel-line))
-             (region-dir (hel-region-direction))
-             (end (progn (forward-thing line count)
+      (let* ((region-dir (hel-region-direction))
+             (end (progn (forward-thing 'hel-line count)
                          (when (= (point) (mark-marker))
-                           (forward-thing line motion-dir))
+                           (forward-thing 'hel-line motion-dir))
                          (point)))
              (start (if (/= region-dir (hel-region-direction))
                         (save-excursion
                           (goto-char (mark-marker))
-                          (forward-thing line (- motion-dir))
+                          (forward-thing 'hel-line (- motion-dir))
                           (point))
                       (mark))))
-        (hel-set-region start end nil :adjust)))
+        (hel-set-region start end)))
+    (when (= 1 (count-lines (region-beginning) (region-end) t))
+      (hel-ensure-region-direction -1))
     (setq disable-point-adjustment t)))
 
 ;; X
@@ -909,53 +960,17 @@ If ARG positive number — enable, negative — disable."
 (hel-define-command hel-mark-whole-buffer ()
   :multiple-cursors nil
   (interactive)
-  (hel-delete-all-fake-cursors)
+  (hel-disable-multiple-cursors-mode)
   (hel-push-point)
   ;; `minibuffer-prompt-end'is really `point-min' in most cases, but if we're
   ;; in the minibuffer, this is at the end of the prompt.
-  (hel-set-region (minibuffer-prompt-end) (point-max) -1 :adjust))
-
-;; s
-(hel-define-command hel-select-regex (&optional invert)
-  "Create new selections for all matches to the regexp entered withing current
-selections.
-
-If INVERT is non-nil — create new selections for all regions that NOT match to
-entered regexp withing current selections."
-  :multiple-cursors nil
-  (interactive)
-  (when (region-active-p)
-    (hel-with-real-cursor-as-fake
-      (let* ((cursors (hel-all-fake-cursors))
-             (ranges (-map (lambda (cursor)
-                             (if (overlay-get cursor 'mark-active)
-                                 (let ((point (marker-position
-                                               (overlay-get cursor 'point)))
-                                       (mark (marker-position
-                                              (overlay-get cursor 'mark))))
-                                   (if (< point mark)
-                                       (cons point mark)
-                                     (cons mark point)))))
-                           cursors)))
-        (-each cursors #'hel-hide-fake-cursor)
-        (if (hel-select-interactively-in ranges invert)
-            (-each cursors #'hel--delete-fake-cursor)
-          ;; Restore original cursors
-          (-each cursors #'hel-show-fake-cursor))))))
-
-;; S
-(hel-define-command hel-split-region ()
-  "Split each selection according to the regexp entered."
-  :multiple-cursors nil
-  (interactive)
-  (hel-select-regex t))
+  (hel-set-region (minibuffer-prompt-end) (point-max) -1))
 
 ;; M-s
 (hel-define-command hel-split-region-on-newline ()
   "Split selections on line boundaries."
   :multiple-cursors nil
   (interactive)
-  (hel-disable-newline-at-eol)
   (hel-with-each-cursor
     (hel-extend-selection -1)
     (when (use-region-p)
@@ -977,20 +992,6 @@ entered regexp withing current selections."
               (hel-create-fake-cursor border (mark))
               (set-marker (mark-marker) (point)))))))))
 
-;; K
-(hel-define-command hel-keep-selections ()
-  "Keep selections that match to the regexp entered."
-  :multiple-cursors nil
-  (interactive)
-  (hel-filter-selections))
-
-;; M-K
-(hel-define-command hel-remove-selections ()
-  "Remove selections that match to the regexp entered."
-  :multiple-cursors nil
-  (interactive)
-  (hel-filter-selections t))
-
 ;; _
 (hel-define-command hel-trim-whitespaces-from-selection ()
   "Trim whitespaces and newlines from the both ends of selections."
@@ -1007,37 +1008,36 @@ entered regexp withing current selections."
 
 ;; &
 (hel-define-command hel-align-selections ()
-  "Align selections."
+  "Align selections by column."
   :multiple-cursors nil
   (interactive)
   (hel-with-real-cursor-as-fake
-    (let ((rest (-partition-by (lambda (cursor)
-                                 (line-number-at-pos (overlay-get cursor 'point)))
-                               (hel-all-fake-cursors :sort)))
-          cursors)
-      (while (progn (setq cursors (mapcar #'car rest))
-                    (length> cursors 1))
-        (setq rest (->> rest
-                        (mapcar #'cdr)
-                        (delq nil)))
+    (hel-save-window-scroll
+      (dolist (cursors (->> (hel-all-fake-cursors :sort)
+                            ;; split cursors into groups by line
+                            (-partition-by (lambda (cursor)
+                                             (-> (overlay-get cursor 'point)
+                                                 (line-number-at-pos))))
+                            ;; Transpose columns and rows to align all first
+                            ;; cursors in each line, than all second and so on.
+                            (hel-transpose)))
         (let ((column (-reduce-from (lambda (column cursor)
                                       (goto-char (overlay-get cursor 'point))
                                       (max column (current-column)))
                                     0 cursors)))
-          ;; Align
-          (hel-save-window-scroll
-            (dolist (cursor cursors)
-              (hel-with-fake-cursor cursor
-                (unless (= (current-column) column)
-                  (let ((deactivate-mark nil)
-                        (padding (s-repeat (- column (current-column)) " ")))
-                    (cond ((and (use-region-p)
-                                (natnump (hel-region-direction)))
-                           (hel--exchange-point-and-mark)
-                           (insert padding)
-                           (hel--exchange-point-and-mark))
-                          (t
-                           (insert padding)))))))))))))
+          (dolist (cursor cursors)
+            (hel-with-fake-cursor cursor
+              (unless (= (current-column) column)
+                (let ((deactivate-mark nil)
+                      (padding (make-string (- column (current-column)) ?\s)))
+                  (if (and (use-region-p)
+                           (natnump (hel-region-direction)))
+                      (progn
+                        (hel--exchange-point-and-mark)
+                        (insert padding)
+                        (hel--exchange-point-and-mark))
+                    ;; else
+                    (insert padding)))))))))))
 
 ;; C
 (hel-define-command hel-copy-selection (count)
@@ -1046,7 +1046,6 @@ entered regexp withing current selections."
   :merge-selections t
   (interactive "p")
   (hel-with-each-cursor
-    (hel-disable-newline-at-eol)
     (hel-motion-loop (dir count)
       (if (use-region-p)
           (hel--copy-region dir)
@@ -1070,6 +1069,7 @@ entered regexp withing current selections."
               ((not (hel-fake-cursor-at pos))))
     (unless (hel-fake-cursor-at (point))
       (hel-create-fake-cursor-from-point))
+    (deactivate-mark)
     (goto-char pos)))
 
 (defun hel--copy-region (direction)
@@ -1120,11 +1120,10 @@ at START-COLUMN, ends at END-COLUMN and consists of NUMBER-OF-LINES."
           (cons end start)))))
 
 ;; ,
-(hel-define-command hel-delete-all-fake-cursors ()
-  "Delete all fake cursors from current buffer."
-  (interactive)
-  (when hel-multiple-cursors-mode
-    (hel-multiple-cursors-mode -1)))
+(defalias 'hel-remove-all-fake-cursors #'hel-disable-multiple-cursors-mode
+  (format "Delete all fake cursors from current buffer.
+You may restore them with %s (`hel-restore-cursors')."
+          (propertize "g v" 'face 'help-key-binding)))
 
 ;; M-,
 (hel-define-command hel-remove-main-cursor ()
@@ -1135,6 +1134,14 @@ at START-COLUMN, ends at END-COLUMN and consists of NUMBER-OF-LINES."
     (hel-restore-point-from-fake-cursor (or (hel-next-fake-cursor (point))
                                             (hel-first-fake-cursor)))
     (hel-auto-multiple-cursors-mode)))
+
+;; gv
+(hel-define-command hel-restore-cursors ()
+  "Restore last multiple cursors positions."
+  :multiple-cursors nil
+  (interactive)
+  (when hel--cursors-positions-history
+    (hel-place-cursors hel--cursors-positions-history)))
 
 ;; M-minus
 (hel-define-command hel-merge-selections ()
@@ -1152,8 +1159,28 @@ at START-COLUMN, ends at END-COLUMN and consists of NUMBER-OF-LINES."
                       (overlay-get cursor 'mark)
                       (point)
                       (if (use-region-p) (mark) 0)))))
-      (hel-delete-all-fake-cursors)
-      (hel-set-region beg end 1))))
+      (hel-disable-multiple-cursors-mode)
+      (hel-set-region beg end))))
+
+;; gg
+(hel-define-command hel-first-selection ()
+  "Make the first selection the main selection."
+  :multiple-cursors nil
+  (interactive)
+  (when hel-multiple-cursors-mode
+    (hel-recenter-point-on-jump
+      (hel-create-fake-cursor-from-point)
+      (hel-restore-point-from-fake-cursor (hel-first-fake-cursor)))))
+
+;; G
+(hel-define-command hel-last-selection ()
+  "Make the last selection the main selection."
+  :multiple-cursors nil
+  (interactive)
+  (when hel-multiple-cursors-mode
+    (hel-recenter-point-on-jump
+      (hel-create-fake-cursor-from-point)
+      (hel-restore-point-from-fake-cursor (hel-last-fake-cursor)))))
 
 ;; )
 (hel-define-command hel-rotate-selections-forward (count)
@@ -1302,19 +1329,6 @@ already there."
   (negative-argument arg)
   (set-transient-map (keymap-lookup nil "m a")))
 
-;; Do not show keys bound to following commands in which-key popup.
-(with-eval-after-load 'which-key
-  (let ((regexp (eval-when-compile
-                  (regexp-opt (-map #'symbol-name
-                                    '(hel-m-digit-argument
-                                      hel-mi-digit-argument
-                                      hel-ma-digit-argument
-                                      hel-m-negative-argument
-                                      hel-mi-negative-argument
-                                      hel-ma-negative-argument))))))
-    (cl-pushnew `((nil . ,regexp) . ignore)
-                which-key-replacement-alist :test #'equal)))
-
 ;; miw
 (hel-define-command hel-mark-inner-word (count)
   :multiple-cursors t
@@ -1379,7 +1393,7 @@ already there."
   :merge-selections t
   (interactive "p")
   (hel-push-point)
-  (hel-mark-inner-thing 'hel-paragraph count t)
+  (hel-mark-inner-thing 'hel-paragraph count)
   (hel-reveal-point-when-on-top))
 
 ;; map
@@ -1388,7 +1402,7 @@ already there."
   :merge-selections t
   (interactive "p")
   (hel-push-point)
-  (hel-mark-a-thing 'hel-paragraph count t)
+  (hel-mark-a-thing 'hel-paragraph count)
   (hel-reveal-point-when-on-top))
 
 ;; mif
@@ -1397,7 +1411,7 @@ already there."
   :merge-selections t
   (interactive "p")
   (hel-push-point)
-  (hel-mark-inner-thing 'hel-function count t)
+  (hel-mark-inner-thing 'hel-function count)
   (hel-ensure-region-direction -1)
   (hel-reveal-point-when-on-top))
 
@@ -1433,7 +1447,7 @@ already there."
                     (goto-char thing-beg)
                     (car (bounds-of-thing-at-point 'hel-paragraph)))
               end thing-end))
-    (hel-set-region beg end (hel-sign count) :adjust))
+    (hel-set-region beg end (hel-sign count)))
   (hel-reveal-point-when-on-top))
 
 ;; mi"
@@ -1555,7 +1569,7 @@ already there."
   (when-let* ((char (if (characterp last-command-event)
                         last-command-event
                       (get last-command-event 'ascii-character)))
-              (bounds (hel-surround--4-bounds char)))
+              (bounds (hel-surround--remove char)))
     (-let [(_ beg end _) bounds]
       (hel-set-region beg end))))
 
@@ -1566,248 +1580,75 @@ already there."
   (when-let* ((char (if (characterp last-command-event)
                         last-command-event
                       (get last-command-event 'ascii-character)))
-              (bounds (hel-surround--4-bounds char)))
+              (bounds (hel-surround--remove char)))
     (-let [(beg _ _ end) bounds]
       (hel-set-region beg end))))
 
-;;; Search
-
-;; f
-(hel-define-command hel-find-char-forward (count)
-  "Prompt user for CHAR and move to the next COUNT'th occurrence of it.
-Right after this command while hints are active, you can use `n' and `N'
-keys to repeat motion forward/backward."
-  :multiple-cursors t
-  :merge-selections 'extend-selection
-  (interactive "p")
-  (let ((char (read-char "f" t)))
-    (hel-maybe-set-mark)
-    (hel-motion-loop (dir count)
-      (hel-find-char char dir nil))))
-
-;; F
-(hel-define-command hel-find-char-backward (count)
-  "Prompt user for CHAR and move to the previous COUNT'th occurrence of it.
-Right after this command while hints are active, you can use `n' and `N'
-keys to repeat motion forward/backward."
-  :multiple-cursors t
-  :merge-selections 'extend-selection
-  (interactive "p")
-  (cl-callf - count)
-  (let ((char (read-char "F" t)))
-    (hel-maybe-set-mark)
-    (hel-motion-loop (dir count)
-      (hel-find-char char dir nil))))
-
-;; t
-(hel-define-command hel-till-char-forward (count)
-  "Prompt user for CHAR and move before the next COUNT'th occurrence of it.
-Right after this command while hints are active, you can use `n' and `N'
-keys to repeat motion forward/backward."
-  :multiple-cursors t
-  :merge-selections 'extend-selection
-  (interactive "p")
-  (let ((char (read-char "t" t)))
-    (hel-maybe-set-mark)
-    (hel-motion-loop (dir count)
-      (hel-find-char char dir t))))
-
-;; T
-(hel-define-command hel-till-char-backward (count)
-  "Prompt user for CHAR and move before the prevous COUNT'th occurrence of it.
-Right after this command while hints are active, you can use `n' and `N'
-keys to repeat motion forward/backward."
-  :multiple-cursors t
-  :merge-selections 'extend-selection
-  (interactive "p")
-  (cl-callf - count)
-  (let ((char (read-char "T" t)))
-    (hel-maybe-set-mark)
-    (hel-motion-loop (dir count)
-      (hel-find-char char dir t))))
-
-;; /
-(hel-define-command hel-search-forward (count)
-  :multiple-cursors nil
-  :merge-selections t
-  (interactive "p")
-  (when (hel-search-interactively)
-    (setq hel-search--direction 1)
-    (hel-search-next count)))
-
-;; ?
-(hel-define-command hel-search-backward (count)
-  :multiple-cursors nil
-  :merge-selections t
-  (interactive "p")
-  (when (hel-search-interactively -1)
-    (setq hel-search--direction -1)
-    (hel-search-next count)))
-
-;; n
-(hel-define-command hel-search-next (count)
-  "Select next COUNT search match."
-  :multiple-cursors nil
-  :merge-selections t
-  (interactive "p")
-  (hel-disable-newline-at-eol)
-  (unless hel-search--direction (setq hel-search--direction 1))
-  (when (< hel-search--direction 0)
-    (cl-callf - count))
-  (let ((regexp (hel-search-pattern))
-        (region-dir (if (use-region-p) (hel-region-direction) 1)))
-    (hel-recenter-point-on-jump
-      (hel-motion-loop (search-dir count)
-        (-when-let ((beg . end) (save-excursion
-                                  (helf-search--search regexp search-dir)))
-          ;; Push mark on first invocation.
-          (unless (or (memq last-command '(hel-search-next hel-search-previous))
-                      (hel-search--keep-highlight-p last-command))
-            (hel-push-point))
-          (when (and hel--extend-selection (use-region-p))
-            (hel-create-fake-cursor-from-point))
-          (hel-set-region beg end region-dir))))
-    (hel-highlight-search-pattern regexp)))
-
-;; N
-(hel-define-command hel-search-previous (count)
-  "Select previous COUNT search match."
-  :multiple-cursors nil
-  :merge-selections t
-  (interactive "p")
-  (hel-search-next (- count)))
-
-;; *
-(hel-define-command hel-construct-search-pattern ()
-  "Construct search pattern from all current selections and store it to / register.
-Auto-detect word boundaries at the beginning and end of the search pattern."
-  :multiple-cursors nil
-  (interactive)
-  (let ((quote-fn (if hel-use-pcre-regex #'rxt-quote-pcre #'regexp-quote))
-        patterns)
-    (hel-with-each-cursor
-      (when (use-region-p)
-        (let* ((beg (region-beginning))
-               (end (region-end))
-               (open-word-boundary
-                (cond ((eql beg (pos-bol))
-                       (->> (buffer-substring-no-properties beg (1+ beg))
-                            (string-match-p "[[:word:]]")))
-                      (t
-                       (->> (buffer-substring-no-properties (1- beg) (1+ beg))
-                            (string-match-p "[^[:word:]][[:word:]]")))))
-               (close-word-boundary
-                (cond ((eql end (pos-eol))
-                       (->> (buffer-substring-no-properties (1- end) end)
-                            (string-match-p "[[:word:]]")))
-                      (t
-                       (->> (buffer-substring-no-properties (1- end) (1+ end))
-                            (string-match-p "[[:word:]][^[:word:]]")))))
-               (string (->> (buffer-substring-no-properties (point) (mark))
-                            (funcall quote-fn))))
-          (push (concat (if open-word-boundary "\\b")
-                        string
-                        (if close-word-boundary "\\b"))
-                patterns))))
-    (setq patterns (nreverse (-uniq patterns)))
-    (let* ((separator (if hel-use-pcre-regex "|" "\\|"))
-           (regexp (apply #'concat (-interpose separator patterns))))
-      (hel-add-to-regex-history regexp)
-      (hel-highlight-search-pattern regexp))))
-
-;; M-*
-(hel-define-command hel-construct-search-pattern-no-bounds ()
-  "Construct search pattern from all current selection and store it to / register.
-Do not auto-detect word boundaries in the search pattern."
-  :multiple-cursors nil
-  (interactive)
-  (let ((quote (if hel-use-pcre-regex #'rxt-quote-pcre #'regexp-quote))
-        patterns)
-    (hel-with-each-cursor
-      (when (use-region-p)
-        (push (funcall quote (buffer-substring-no-properties (point) (mark)))
-              patterns)))
-    (cl-callf nreverse patterns)
-    (let* ((separator (if hel-use-pcre-regex "|" "\\|"))
-           (regexp (apply #'concat (-interpose separator patterns))))
-      (hel-add-to-regex-history regexp)
-      (hel-highlight-search-pattern regexp))))
-
 ;;; Surround
-
-(defun hel-surround--read-char ()
-  "Read char from minibuffer and return (LEFT . RIGHT) pair with strings
-to surround with."
-  (let* ((char (read-char "surround: " t))
-         (pair-or-fun-or-nil (-some-> (alist-get char hel-surround-alist)
-                               (plist-get :pair))))
-    (pcase pair-or-fun-or-nil
-      ((and (pred functionp) fn)
-       (funcall fn))
-      ((and (pred consp) pair)
-       pair)
-      (_ (cons (char-to-string char) (char-to-string char))))))
-
-;; Cache the function output to use with all cursors.
-(hel-cache-input hel-surround--read-char)
 
 ;; ms
 (hel-define-command hel-surround ()
-  "Enclose the selected region in chosen delimiters.
-If the region consist of full lines, insert delimiters on separate
-lines and reindent the region."
+  "Enclose the active region with the chosen delimiters.
+
+Left brackets — `(', `[', `{' — add extra spaces around the surrounded
+region. If the selection is linewise (made with \"x\"), the delimiters
+are placed on separate lines.
+
+Right brackets — `)', `]', `}' — do the opposite: they remove all
+spaces or newlines from the selection and are inserted tightly.
+
+For custom delimiters, the general rule is: if either delimiter
+contains a newline character, they are inserted on separate lines."
   :multiple-cursors t
   (interactive)
-  (when (use-region-p)
-    (hel-save-region
-      (-let (((left . right) (hel-surround--read-char))
-             (beg (copy-marker (region-beginning)))
-             (end (copy-marker (region-end) t))
-             (linewise-selection? (hel-logical-lines-p)))
-        (when linewise-selection?
-          (cl-callf s-trim left)
-          (cl-callf s-trim right))
-        (goto-char beg)
-        (insert left)
-        (when linewise-selection? (newline))
-        (goto-char end)
-        (when linewise-selection? (newline))
-        (insert right)
-        (indent-region beg end)
-        (set-marker beg nil)
-        (set-marker end nil)))
+  (when-let* (((use-region-p))
+              (key (read-char "Surround: " t)))
+    (-let* (((left . right) (hel-surround--insert key))
+            (linewise? (or (string-search "\n" left)
+                           (string-search "\n" right))))
+      (if linewise?
+          (progn
+            (cl-callf string-trim left)
+            (cl-callf string-trim right))
+        (hel-trim-whitespaces-from-selection))
+      (let ((beg (copy-marker (region-beginning)))
+            (end (copy-marker (region-end) t)))
+        (hel-save-region
+          (goto-char beg)
+          (insert left)
+          (when linewise? (newline))
+          (goto-char end)
+          (insert right)
+          (when linewise? (newline))
+          (indent-region beg end)
+          (set-marker beg nil)
+          (set-marker end nil))))
     (hel-extend-selection -1)))
 
 ;; md
 (hel-define-command hel-surround-delete ()
+  "Delete surround."
   :multiple-cursors t
   (interactive)
   (when-let* ((key (read-char "Delete pair: " t))
-              (bounds (hel-surround--4-bounds key)))
+              (bounds (hel-surround--remove key)))
     (-let (((left-beg left-end right-beg right-end) bounds)
            (deactivate-mark nil))
-      (hel-disable-newline-at-eol)
       (delete-region right-beg right-end)
       (delete-region left-beg left-end))))
 
 ;; mr
 (hel-define-command hel-surround-change ()
+  "Change surround."
   :multiple-cursors t
   (interactive)
-  (when-let* ((char (read-char "Delete pair: " t))
-              (bounds (hel-surround--4-bounds char)))
-    (-let* (((left-beg left-end right-beg right-end) bounds)
-            (char (read-char "Insert pair: " t))
-            (pair-or-fun (-some-> (alist-get char hel-surround-alist)
-                           (plist-get :pair)))
-            ((left . right) (pcase pair-or-fun
-                              ((and (pred functionp) fun)
-                               (funcall fun))
-                              ((and pair (guard pair))
-                               pair)
-                              ('nil (cons char char))))
-            (deactivate-mark nil))
-      (save-mark-and-excursion
+  (when-let* ((remove-key (read-char "Delete pair: " t))
+              (insert-key (read-char "Insert pair: " t))
+              (4-bounds (hel-surround--remove remove-key)))
+    (-let (((left-beg left-end right-beg right-end) 4-bounds)
+           ((left . right) (hel-surround--insert insert-key))
+           (deactivate-mark nil))
+      (hel-save-region
         (delete-region right-beg right-end)
         (goto-char right-beg)
         (insert right)
@@ -1849,38 +1690,10 @@ All children of the parent of the splitted window will be rebalanced."
   (interactive)
   (hel-window-vsplit (frame-root-window)))
 
-(hel-define-command hel-window-left (count)
-  "Move the cursor to new COUNT-th window left of the current one."
-  :multiple-cursors nil
-  (interactive "p")
-  (dotimes (_ count)
-    (windmove-left)))
-
-(hel-define-command hel-window-right (count)
-  "Move the cursor to new COUNT-th window right of the current one."
-  :multiple-cursors nil
-  (interactive "p")
-  (dotimes (_ count)
-    (windmove-right)))
-
-(hel-define-command hel-window-up (count)
-  "Move the cursor to new COUNT-th window up of the current one."
-  :multiple-cursors nil
-  (interactive "p")
-  (dotimes (_ count)
-    (windmove-up)))
-
-(hel-define-command hel-window-down (count)
-  "Move the cursor to new COUNT-th window down of the current one."
-  :multiple-cursors nil
-  (interactive "p")
-  (dotimes (_ count)
-    (windmove-down)))
-
 (defmacro hel-save-side-windows (&rest body)
   "Toggle side windows, evaluate BODY, restore side windows."
   (declare (indent defun) (debug (&rest form)))
-  (let ((sides (make-symbol "sidesvar")))
+  (cl-with-gensyms (sides)
     `(let ((,sides (window-with-parameter 'window-side)))
        (when ,sides (window-toggle-side-windows))
        (unwind-protect
@@ -1927,9 +1740,12 @@ All children of the parent of the splitted window will be rebalanced."
   (interactive)
   (hel-move-window 'down))
 
+;; C-w c
 (hel-define-command hel-window-delete ()
   "Delete the current window or tab.
-Rebalance all children of the deleted window's parent window."
+Rebalance all children of the deleted window's parent window.
+If `tab-bar-mode' is enabled and the window is the only window on the tab —
+close the tab."
   :multiple-cursors nil
   (interactive)
   (let ((parent (window-parent)))
@@ -1952,8 +1768,11 @@ and opens a new window."
   (-doto (clone-indirect-buffer nil nil)
     (switch-to-buffer)))
 
+;; C-w q
 (hel-define-command hel-kill-current-buffer-and-window ()
-  "Kill the current buffer and delete the current window or tab."
+  "Kill current buffer and close the window.
+If `tab-bar-mode' is enabled and the window is the only window on the tab —
+close the tab."
   :multiple-cursors nil
   (interactive)
   (let ((parent-win (window-parent)))
@@ -1978,7 +1797,6 @@ narrowing doesn't affect other windows displaying the same buffer. Call
   :multiple-cursors t
   (interactive)
   (when (use-region-p)
-    (hel-restore-newline-at-eol)
     (let ((orig-buffer (current-buffer))
           (name (or buffer-file-name
                     list-buffers-directory))
@@ -1996,7 +1814,7 @@ narrowing doesn't affect other windows displaying the same buffer. Call
 Incrementally kill indirect buffers (under the assumption they were created by
 `hel-narrow-to-region-indirectly') and switch to their base buffer.
 
-With \\[universal-argument] kill all indirect buffers, return the base buffer and widen it.
+With \\[universal-argument] undone all recursive levels of inderect narrowing.
 
 If the current buffer is not an indirect buffer, works like `widen'."
   :multiple-cursors nil
@@ -2009,15 +1827,18 @@ If the current buffer is not an indirect buffer, works like `widen'."
                (not (buffer-live-p base-buffer)))
            (widen))
           (arg
-           (let ((buffer orig-buffer)
-                 (buffers-to-kill (list orig-buffer)))
-             (while (setq buffer (buffer-local-value 'hel--narrowed-base-buffer buffer))
-               (push buffer buffers-to-kill))
-             (switch-to-buffer (buffer-base-buffer))
-             (->> buffers-to-kill
-                  (-remove (current-buffer))
-                  (-each #'kill-buffer))))
-          ((switch-to-buffer base-buffer)
+           (-let (((base-buffer . narrowed-buffers)
+                   (->> orig-buffer
+                        (-unfold (lambda (buffer)
+                                   (when buffer
+                                     (cons buffer (buffer-local-value
+                                                   'hel--narrowed-base-buffer
+                                                   buffer)))))
+                        (nreverse))))
+             (switch-to-buffer base-buffer)
+             (-each narrowed-buffers #'kill-buffer)))
+          (t
+           (switch-to-buffer base-buffer)
            (kill-buffer orig-buffer)))))
 
 ;; C-w :
@@ -2034,5 +1855,6 @@ If the current buffer is not an indirect buffer, works like `widen'."
   (other-window-prefix)
   (call-interactively #'execute-extended-command-for-buffer))
 
+;;; .
 (provide 'hel-commands)
 ;;; hel-commands.el ends here

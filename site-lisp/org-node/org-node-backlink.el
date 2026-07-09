@@ -1,21 +1,11 @@
-;;; org-node-backlink.el --- Manage :BACKLINKS: properties or drawers -*- lexical-binding: t; -*-
+;;; org-node-backlink.el --- Extension for managing :BACKLINKS: properties or drawers -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2024-2025 Martin Edström
-;;
-;; This file is free software; you can redistribute it and/or modify
-;; it under the terms of the GNU General Public License as published by
-;; the Free Software Foundation; either version 3, or (at your option)
-;; any later version.
-;;
-;; This program is distributed in the hope that it will be useful,
-;; but WITHOUT ANY WARRANTY; without even the implied warranty of
-;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;; GNU General Public License for more details.
-;;
-;; For a full copy of the GNU General Public License
-;; see <http://www.gnu.org/licenses/>.
+;; Copyright (C) 2024-2026 Martin Edström
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
+
+;; Strictly an extension (core does not depend on this file).
 
 ;; A mode for ensuring that the Org nodes that should have
 ;; :BACKLINKS: properties (or :BACKLINKS: drawers) have them,
@@ -35,6 +25,7 @@
 (require 'cl-lib)
 (require 'fileloop)
 (require 'llama)
+(require 'cond-let)
 (require 'org-mem)
 (require 'org-mem-updater)
 (require 'org-node)
@@ -76,7 +67,7 @@ set `org-node-backlink-protect-org-super-links' to nil.")))
   "Warn if `org-node-backlink-do-drawers' is t but properties exist.
 If a warning was not needed, return nil."
   (and org-node-backlink-do-drawers
-       (cl-some (##org-mem-entry-property "BACKLINKS" %) (org-mem-all-id-nodes))
+       (cl-some (##org-mem-entry-property "BACKLINKS" %) (org-node-all-filtered-nodes))
        (display-warning 'org-node-backlink "User option `org-node-backlink-do-drawers' is t,
 but found :BACKLINKS: lines in some property drawers, so doing nothing.
 This is a new default in v2, you probably just need to toggle it.
@@ -252,6 +243,7 @@ That means the second part of a [[id][description]]."
 
 ;;; Commands
 
+;;;###autoload
 (defun org-node-backlink-mass-update-drawers ()
   "Add or update backlinks drawers in all files."
   (interactive)
@@ -259,6 +251,7 @@ That means the second part of a [[id][description]]."
     (user-error "Asked to update :BACKLINKS: drawers, but `org-node-backlink-do-drawers' is nil"))
   (org-node-backlink--fix-all-files 'update-drawers))
 
+;;;###autoload
 (defun org-node-backlink-mass-update-props ()
   "Add or update backlinks properties in all files."
   (interactive)
@@ -266,11 +259,13 @@ That means the second part of a [[id][description]]."
     (user-error "Asked to update :BACKLINKS: properties, but `org-node-backlink-do-drawers' is t"))
   (org-node-backlink--fix-all-files 'update-props))
 
+;;;###autoload
 (defun org-node-backlink-mass-delete-drawers ()
   "Delete all backlinks drawers in all files."
   (interactive)
   (org-node-backlink--fix-all-files 'del-drawers))
 
+;;;###autoload
 (defun org-node-backlink-mass-delete-props ()
   "Delete all backlinks properties in all files."
   (interactive)
@@ -299,7 +294,7 @@ Argument KIND controls how to update them."
       (org-mem-reset nil "org-node: Waiting for org-mem...")
       (unless (org-mem-await "org-node: Waiting for org-mem..." 30)
         (error "org-node: Waited weirdly long for org-mem"))
-      (let* ((files (org-mem-all-files))
+      (let* ((files (org-node-all-filtered-files))
              (dirs (org-node--root-dirs files))
              (problematic (seq-filter (##and (boundp %) (symbol-value %))
                                       '(org-node-backlink-mode
@@ -355,6 +350,8 @@ Do `org-node-backlink-fix-buffer', then maybe save, maybe kill buffer."
     t))
 
 (defvar org-node-backlink--checked nil)
+
+;;;###autoload
 (defun org-node-backlink-fix-buffer (&optional kind)
   "Update :BACKLINKS: properties or drawers in all nodes in buffer.
 Let user option `org-node-backlink-do-drawers' determine which.
@@ -458,7 +455,7 @@ To force an update at any time, use one of these commands:
               (org-node--assert-transclusion-safe)
               (let ((user-is-editing (buffer-modified-p)))
                 (dolist (id (delete-dups ids))
-                  (if-let* ((pos (and id (org-find-property "ID" id))))
+                  (if-let ((pos (and id (org-find-property "ID" id))))
                       (progn (goto-char pos)
                              (org-node-backlink--fix-nearby))
                     (error "Could not find ID %s in file %s" id file)))
@@ -493,7 +490,7 @@ Or if KIND is symbol `update-drawers', `del-drawers', `update-props', or
 (defun org-node-backlink--fix-nearby-property (&optional remove)
   "Update the :BACKLINKS: property in the current entry.
 If REMOVE is non-nil, remove it instead."
-  (when-let* ((prop-pos (car (org-get-property-block))))
+  (when-let ((prop-pos (car (org-get-property-block))))
     (when (get-text-property prop-pos 'read-only)
       ;; Because `org-entry-put' is so unsafe that it inhibits read-only
       (error "org-node-backlink: Area seems to be read-only at %d in %s"
@@ -612,10 +609,6 @@ If REMOVE non-nil, remove it instead."
 ;; links with zero Emacs lag, if we instead use something like
 ;; `org-node-backlink--maybe-fix-proactively' after some idle...
 
-;; In fact, it might let us reason more easily about
-;; `org-node-backlink--maybe-fix-proactively' if we stop doing
-;; `org-mem-updater-ensure-link-at-point-known'.
-
 (defun org-node-backlink--add-in-target (&rest _)
   "For known link at point, leave a backlink in the target node."
   (unless (derived-mode-p 'org-mode)
@@ -627,13 +620,6 @@ If REMOVE non-nil, remove it instead."
          target-id target-file)
     ;; In a link such as [[id:abc1234]], TYPE is "id" and PATH is "abc1234".
     (when (and type path)
-      ;; REVIEW 2025-11-08: Testing with this commented-out.
-      ;;
-      ;; Ensure `org-mem--roam-ref<>id' has recent goods, and that
-      ;; `org-node-backlink--fix-nearby' will not
-      ;; later remove the backlink we're adding
-      ;; (org-mem-updater-ensure-id-node-at-point-known)
-      ;; (org-mem-updater-ensure-link-at-point-known)
       (if (equal "id" type)
           ;; A classic backlink
           (progn
@@ -653,17 +639,17 @@ If REMOVE non-nil, remove it instead."
         (org-node--assert-transclusion-safe)
         (let ((origin-id (org-entry-get-with-inheritance "ID")))
           (when (and origin-id (not (equal origin-id target-id)))
-            (when-let* ((origin-title
-                         (save-excursion
-                           (without-restriction
-                             (goto-char org-entry-property-inherited-from)
-                             (or (org-get-heading t t t t)
-                                 (org-get-title))))))
+            (when-let ((origin-title
+                        (save-excursion
+                          (without-restriction
+                            (goto-char org-entry-property-inherited-from)
+                            (or (org-get-heading t t t t)
+                                (org-get-title))))))
 
               (org-node--with-quick-file-buffer target-file
                 :about-to-do "Org-node going to add backlink in target of link you just inserted"
                 (org-node--assert-transclusion-safe)
-                (if-let* ((pos (org-find-property "ID" target-id)))
+                (if-let ((pos (org-find-property "ID" target-id)))
                     (progn (goto-char pos)
                            (org-node-backlink--add-nearby origin-id origin-title))
                   (message "`org-node-backlink--add-in-target' could not find ID %s in file %s"
@@ -677,7 +663,7 @@ If REMOVE non-nil, remove it instead."
 
 (defun org-node-backlink--add-to-property (id title)
   "Insert a link with ID and TITLE into nearby :BACKLINKS: property."
-  (when-let* ((prop-pos (car (org-get-property-block))))
+  (when-let ((prop-pos (car (org-get-property-block))))
     (when (get-text-property prop-pos 'read-only)
       ;; Because `org-entry-put' is so unsafe that it inhibits read-only
       (error "org-node-backlink: Area seems to be read-only at %d in %s"
@@ -790,3 +776,16 @@ See Info node `(org-node)'."
 (provide 'org-node-backlink)
 
 ;;; org-node-backlink.el ends here
+
+;; Local Variables:
+;; checkdoc-spellcheck-documentation-flag: nil
+;; checkdoc-verb-check-experimental-flag: nil
+;; emacs-lisp-docstring-fill-column: 72
+;; read-symbol-shorthands: (("and$"      . "cond-let--and$")
+;;                          ("and>"      . "cond-let--and>")
+;;                          ("and-let"   . "cond-let--and-let")
+;;                          ("if-let"    . "cond-let--if-let")
+;;                          ("when$"     . "cond-let--when$")
+;;                          ("when-let"  . "cond-let--when-let")
+;;                          ("while-let" . "cond-let--while-let"))
+;; End:

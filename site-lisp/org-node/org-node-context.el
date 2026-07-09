@@ -1,20 +1,11 @@
-;;; org-node-context.el ---  -*- lexical-binding: t; -*-
-;; Copyright (C) 2025 Martin Edström
+;;; org-node-context.el --- Extension for displaying a buffer of backlinks  -*- lexical-binding: t; -*-
 
-;; This program is free software: you can redistribute it and/or modify
-;; it under the terms of the GNU General Public License as published by
-;; the Free Software Foundation, either version 3 of the License, or
-;; (at your option) any later version.
-
-;; This program is distributed in the hope that it will be useful,
-;; but WITHOUT ANY WARRANTY; without even the implied warranty of
-;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-;; GNU General Public License for more details.
-
-;; You should have received a copy of the GNU General Public License
-;; along with this program. If not, see <http://www.gnu.org/licenses/>.
+;; Copyright (C) 2025-2026 Martin Edström
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
+
+;; Strictly an extension (core does not depend on this file).
 
 ;;; Code:
 
@@ -24,6 +15,9 @@
 (require 'org-mem)
 (require 'magit-section)
 (require 'repeat)
+(require 'map)
+(require 'cond-let)
+(require 'llama)
 (eval-when-compile
   (require 'org)
   (require 'org-node)
@@ -32,99 +26,28 @@
 (defgroup org-node-context nil "Preview backlink contexts in separate buffer."
   :group 'org-node)
 
-
-;;; Persistence
-
-(defcustom org-node-context-persist-on-disk nil
-  "Whether to sync cached backlink previews to disk.
-
-This allows the context buffer created by \\[org-node-context-raise] to
-show up more instantly, even the first time it renders a given set of
-backlinks.
-
-Noticeable mainly if you are a connoisseur of low input latency,
-have a bad computer, and often re-start Emacs.
-
-For the cache location, see `org-node-data-dir'."
-  :type 'boolean
-  :package-version '(org-node . "2.0.0"))
-
-(defvar org-node-context--previews (make-hash-table :test 'equal)
-  "1:N table mapping IDs to seen previews of backlink contexts.
-
-Each preview is a cons cell \(POS-DIFF . TEXT) where POS-DIFF
-corresponds to a link\\='s buffer position relative to that of
-the heading that has said ID, and TEXT is an output of
-`org-node-context--get-preview'.")
-
-(defvar org-node-context--persist-timer (timer-create))
-(defvar org-node-context--last-tbl-state 0)
-(defvar org-node-context--did-init-persist nil)
-
-(defun org-node-context--maybe-init-persistence (&rest _)
-  "Try to restore `org-node-context--previews' from disk.
-Then start occasionally syncing back to disk.
-No-op if user option `org-node-context-persist-on-disk' is nil."
-  (when org-node-context-persist-on-disk
-    (unless org-node-context--did-init-persist
-      (setq org-node-context--did-init-persist t)
-      (cancel-timer org-node-context--persist-timer)
-      (setq org-node-context--persist-timer
-            (run-with-idle-timer 50 t #'org-node-context--persist))
-      ;; Load from disk.
-      (when (file-readable-p (org-node-context--persist-file))
-        (with-temp-buffer
-          (insert-file-contents (org-node-context--persist-file))
-          (let ((data (read (current-buffer))))
-            (when (hash-table-p data)
-              (setq org-node-context--last-tbl-state (hash-table-count data))
-              (setq org-node-context--previews data))))))))
-
-(defun org-node-context--persist-file ()
-  "Return path to file that caches previews between sessions."
-  (mkdir org-node-data-dir t)
-  (file-name-concat org-node-data-dir "org-node-backlink-previews.eld"))
-
-(defun org-node-context--persist ()
-  "Sync all cached previews to disk."
-  (if org-node-context-persist-on-disk
-      ;; Only proceed if table has gained new entries.
-      ;; NOTE: Does not proceed if there are merely new previews in existing
-      ;;       entries, but it's good enough this way.
-      (when (not (eq org-node-context--last-tbl-state
-                     (hash-table-count org-node-context--previews)))
-        (org-node-context--clean-stale-previews)
-        (setq org-node-context--last-tbl-state
-              (hash-table-count org-node-context--previews))
-        (with-temp-file (org-node-context--persist-file)
-          (let ((print-length nil))
-            (prin1 org-node-context--previews (current-buffer)))))
-    (cancel-timer org-node-context--persist-timer)
-    (setq org-node-context--did-init-persist nil)))
-
 (defun org-node-context--clean-stale-previews ()
-  "Clean stale members in table `org-node-context--previews'.
-
-Note that each entry in that table has potentially many previews,
-but when this finds one of them stale, it removes that whole entry."
+  "Clean stale members in table `org-node-context--previews'."
   (let ((valid-positions (make-hash-table :test 'equal)))
-    (maphash
-     (lambda (_ links)
-       (dolist (link links)
-         (push (org-mem-link-pos link)
-               (gethash (org-mem-link-nearby-id link) valid-positions))))
-     org-mem--target<>links)
 
-    (maphash
-     (lambda (id previews)
-       (let ((node (org-mem-entry-by-id id))
-             (valid (gethash id valid-positions)))
-         (or (and node
-                  (cl-loop
-                   for (pos-diff . _text) in previews
-                   always (memq (+ pos-diff (org-mem-entry-pos node)) valid)))
-             (remhash id org-node-context--previews))))
-     org-node-context--previews)))
+    (maphash (lambda (pseudo-id links)
+               (dolist (link links)
+                 (push (org-mem-link-pos link)
+                       (gethash (or (org-mem-link-nearby-id link) pseudo-id)
+                                valid-positions))))
+             org-mem--pseudo-id<>links)
+
+    (maphash (lambda (key previews)
+               (let ((entry (or (org-mem-entry-by-id key)
+                                (org-mem-entry-by-pseudo-id key)))
+                     (valid (gethash key valid-positions)))
+                 (unless (and entry
+                              (cl-loop
+                               for (pos-diff . _text) in previews
+                               always (memq (+ pos-diff (org-mem-entry-pos entry))
+                                            valid)))
+                   (remhash key org-node-context--previews))))
+             org-node-context--previews)))
 
 
 ;;; Early defs
@@ -175,7 +98,7 @@ time that context was shown in a visible window.  Including:
 (defun org-node-context-history-go-back ()
   "Show the last context."
   (interactive () org-node-context-mode)
-  (when-let* ((last (pop org-node-context--past)))
+  (when-let ((last (pop org-node-context--past)))
     (push org-node-context--current
           org-node-context--future)
     (org-node-context--refresh nil last t)))
@@ -183,7 +106,7 @@ time that context was shown in a visible window.  Including:
 (defun org-node-context-history-go-forward ()
   "Show the next context."
   (interactive () org-node-context-mode)
-  (when-let* ((next (pop org-node-context--future)))
+  (when-let ((next (pop org-node-context--future)))
     (push org-node-context--current
           org-node-context--past)
     (org-node-context--refresh nil next t)))
@@ -208,7 +131,7 @@ time that context was shown in a visible window.  Including:
 ;; TODO: Solve problem if truncating away a :END: or #+END_... but not #+BEGIN,
 ;; or vice versa.
 ;; (defun org-node-context--truncate-buffer ()
-;;   (when-let* ((cutoff org-node-context-truncate-to-lines))
+;;   (when-let ((cutoff org-node-context-truncate-to-lines))
 ;;     (when (> (line-number-at-pos) cutoff)
 ;;       (forward-line (- cutoff))
 ;;       (delete-region (point-min) (point)))
@@ -286,10 +209,10 @@ properties.  Org-mode is enabled, but the org-element cache is not."
   :type 'hook
   :package-version '(org-node . "2.0.0"))
 
-(defcustom org-node-context-main-buffer "*Backlinks*"
+(defcustom org-node-context-main-buffer "*org-node context*"
   "Name of the main context buffer."
   :type 'string
-  :package-version '(org-node . "2.0.0"))
+  :package-version '(org-node . "3.13.0"))
 
 ;;;###autoload
 (define-minor-mode org-node-context-follow-local-mode
@@ -315,18 +238,22 @@ properties.  Org-mode is enabled, but the org-element cache is not."
   (interactive () org-node-context-mode)
   (unless (derived-mode-p 'org-node-context-mode)
     (error "`org-node-context-visit-thing' called outside context buffer"))
+  ;; Bit magical, but `magit-insert-section' can store a
+  ;; link as the "value" at that section.
   (let* ((value-atpt (oref (magit-current-section) value))
          link-pos
-         (node (if (org-mem-entry-p value-atpt)
-                   ;; Bit magical, but `magit-insert-section' could store the
-                   ;; node as the "value" at that section.
-                   value-atpt
-                 (setq link-pos (org-mem-link-pos value-atpt))
-                 (org-mem-entry-by-id (org-mem-link-nearby-id value-atpt)))))
-    (org-node-goto node)
-    (when link-pos
-      (goto-char link-pos)
-      (recenter))))
+         (origin (pcase value-atpt
+                   ((pred org-mem-entry-p) nil)
+                   ((pred org-mem-link-p)
+                    (setq link-pos (org-mem-link-pos value-atpt))
+                    (org-node-context--get-link-origin value-atpt))
+                   ((pred listp) nil))))
+    (if origin
+        (progn
+          (org-node-goto origin)
+          (goto-char link-pos)
+          (recenter))
+      (message "Point not on a backlink snippet"))))
 
 (defun org-node-context-raise-1 ()
   "Either display a context buffer or refresh an already visible one."
@@ -381,7 +308,7 @@ Repeatable on the last key of a key sequence if
 (defun org-node-context-toggle ()
   "Show the main context buffer, or hide it if already showing."
   (interactive)
-  (if-let* ((win (get-buffer-window org-node-context-main-buffer 'visible)))
+  (if-let ((win (get-buffer-window org-node-context-main-buffer 'visible)))
       (quit-window nil win)
     (let ((buf (get-buffer-create org-node-context-main-buffer)))
       (when (derived-mode-p 'org-mode)
@@ -394,6 +321,7 @@ Repeatable on the last key of a key sequence if
 Call the former if `org-node-context-follow-mode' is enabled,
 otherwise call the latter."
   (interactive)
+  (org-node-context--clean-stale-previews)
   (if org-node-context-follow-mode
       (org-node-context-toggle)
     (org-node-context-raise)))
@@ -412,7 +340,7 @@ otherwise call the latter."
 
 (defun org-node-context--displaying-p (buf id)
   "Is BUF displaying context for ID?"
-  (when-let* ((buf (get-buffer (or buf org-node-context-main-buffer))))
+  (when-let ((buf (get-buffer (or buf org-node-context-main-buffer))))
     (equal id (buffer-local-value 'org-node-context--current buf))))
 
 (defun org-node-context-refresh-this-buffer (&rest _)
@@ -423,6 +351,13 @@ otherwise call the latter."
 
 
 ;;; Plumbing
+
+(defvar org-node-context--previews (make-hash-table :test 'equal)
+  "Table of preview snippets of backlink contexts.
+
+Each table value is an alist of \((POS-DIFF . TEXT) ...) where POS-DIFF
+corresponds to a link\\='s buffer position relative to that of its
+heading, and TEXT is an output of `org-node-context--get-preview'.")
 
 (defun org-node-context--refresh (&optional buf id from-history-nav)
   "Refresh buffer BUF to show context for node known by ID.
@@ -453,14 +388,14 @@ that buffer."
         (erase-buffer)
         (setq header-line-format
               (concat "Context for \"" (org-mem-entry-title node) "\""))
-        (magit-insert-section (org-node-context node)
-          (when-let* ((links (org-mem-id-links-to-entry node)))
-            (magit-insert-section (org-node-context 'id-links)
+        (magit-insert-section (org-node-context :root)
+          (when-let ((links (org-mem-id-links-to-entry node)))
+            (magit-insert-section (org-node-context :id-links)
               (magit-insert-heading "ID backlinks:")
               (org-node-context--insert-backlink-sections links)
               (insert "\n")))
-          (when-let* ((links (org-mem-roam-reflinks-to-entry node)))
-            (magit-insert-section (org-node-context 'reflinks)
+          (when-let ((links (org-mem-roam-reflinks-to-entry node)))
+            (magit-insert-section (org-node-context :reflinks)
               (magit-insert-heading "Ref backlinks:")
               (org-node-context--insert-backlink-sections links)
               (insert "\n"))))
@@ -470,61 +405,49 @@ that buffer."
 (defun org-node-context--insert-backlink-sections (links)
   "Insert a section displaying a preview of LINK."
   (dolist (link (sort links #'org-node-context--origin-title-lessp))
-    (let* ((node (org-mem-entry-by-id (org-mem-link-nearby-id link)))
-           (breadcrumbs (if-let* ((olp (org-mem-olpath-with-file-title node)))
+    (let* ((entry (org-node-context--get-link-origin link))
+           (breadcrumbs (if-let ((olp (org-mem-olpath-with-file-title entry)))
                             (string-join olp " > ")
                           "Top")))
       (magit-insert-section (org-node-context link)
         (magit-insert-heading
           (format "%s (%s)"
-                  (propertize (org-mem-title node)
+                  (propertize (org-mem-title entry)
                               'face
                               'org-node-context-origin-title)
                   (propertize breadcrumbs 'face 'org-node-parent)))
-        (insert (org-node-context--get-preview node link))
+        (insert (org-node-context--get-preview link))
         (insert "\n")))))
 
-(defvar org-node-context--snippet-link)
-(defun org-node-context--get-preview (node link)
-  "Get a preview snippet out of NODE file, where LINK is.
+(defun org-node-context--get-preview (link)
+  "Get a preview snippet from around LINK in its containing file.
 
 Actually, if a snippet was previously cached, return the cached version,
-else briefly visit the file at LINK-POS and call
+else briefly visit the file, go to the link and call
 `org-node-context--extract-entry-at-point'."
-  (let* ((id (org-mem-entry-id node))
+  (let* ((entry (org-node-context--get-link-origin link))
+         (key (or (org-mem-entry-id entry) (org-mem-entry-pseudo-id entry)))
          (link-pos (org-mem-link-pos link))
-         ;; NOTE: `pos-diff' is not necessary in a simple implementation, but
-         ;; this level of granularity lets us avoid wiping all cached previews
+         ;; Tracking `pos-diff' lets us avoid wiping all cached previews
          ;; in a large file every time it is saved -- doing so would make the
          ;; cache useless, when you are working in a large file with links
          ;; between parts of itself.
-         ;;
-         ;; Instead, we just don't wipe anything, and trust in a sloppy rule of
-         ;; thumb: when the text between a link and its heading get edited,
-         ;; that will almost always result in a new unique `pos-diff'.
-         (pos-diff (- link-pos (org-mem-entry-pos node))))
-    (or (alist-get pos-diff (gethash id org-node-context--previews))
-        (setf
-         (alist-get pos-diff (gethash id org-node-context--previews))
-         (let (snippet)
-           (with-current-buffer (org-node--work-buffer-for (org-mem-file node))
-             (goto-char link-pos)
-             (setq snippet (org-node-context--extract-entry-at-point)))
-           (with-current-buffer (org-mem-org-mode-scratch)
-             (erase-buffer)
-             (insert snippet)
-             (goto-char pos-diff)
-             (run-hooks 'org-node-context-postprocess-hook)
-             ;; Finally font-lock now that we are in a tiny buffer that
-             ;; contains only the snippet that needs to be font-locked, not the
-             ;; entire source file.
-             ;;
-             ;; It would be nice to do this before the postprocess hook instead
-             ;; of after, to offer the possibility to override colors
-             ;; or something, but the hook also could be used to add text,
-             ;; so we have to re-fontify in any case.
-             (font-lock-ensure)
-             (buffer-string)))))))
+         (pos-diff (- link-pos (org-mem-entry-pos entry))))
+    (with-memoization (alist-get pos-diff (gethash key org-node-context--previews))
+      (let (snippet)
+        (with-current-buffer (org-node--work-buffer-for (org-mem-file entry))
+          (goto-char link-pos)
+          (setq snippet (org-node-context--extract-entry-at-point)))
+        (with-current-buffer (org-mem-scratch)
+          (erase-buffer)
+          (insert snippet)
+          (goto-char pos-diff)
+          (run-hooks 'org-node-context-postprocess-hook)
+          ;; Finally font-lock now that we are in a tiny buffer that
+          ;; contains only the snippet that needs to be font-locked, not the
+          ;; entire source file.
+          (font-lock-ensure)
+          (buffer-string))))))
 
 (defun org-node-context--extract-entry-at-point ()
   "Return whole entry at point as a string, including heading if any."
@@ -540,9 +463,80 @@ Decide this by getting the titles of the nodes wherein the links were
 found, and checking if the first title would come lexicographically
 before the second title."
   (string<
-   (org-mem-entry-title (org-mem-entry-by-id (org-mem-link-nearby-id link-1)))
-   (org-mem-entry-title (org-mem-entry-by-id (org-mem-link-nearby-id link-2)))))
+   (org-mem-entry-title (org-node-context--get-link-origin link-1))
+   (org-mem-entry-title (org-node-context--get-link-origin link-2))))
+
+(defun org-node-context--get-link-origin (link)
+  "Return the entry that contains LINK.
+Actually return the ancestor ID-node, if there is one and the direct
+entry has no ID."
+  (let ((id (org-mem-link-nearby-id link)))
+    (or (and id (org-mem-entry-by-id id))
+        (org-mem-link-entry link))))
+
+
+;;; Persistence
+
+(defcustom org-node-context-persist-on-disk nil
+  "Whether to sync cached backlink previews to disk.
+The disk location is `org-node-data-dir'.
+
+Here\\='s how you test whether this is noticeable on your system:
+1. Restart Emacs
+2. Open a file with many subtree nodes
+3. Collapse them all (i.e. S-TAB until you see only the headings)
+4. Have a context buffer open with `org-node-context-follow-mode'
+5. Hold the \\[next-line] key."
+  :type 'boolean
+  :package-version '(org-node . "2.0.0"))
+
+(defvar org-node-context--persist-timer (timer-create))
+
+(defun org-node-context--maybe-init-persistence (&rest _)
+  "Try to restore `org-node-context--previews' from disk.
+Then start occasionally syncing back to disk.
+No-op if user option `org-node-context-persist-on-disk' is nil."
+  (when (and org-node-context-persist-on-disk
+             (hash-table-empty-p org-node-context--previews))
+    (cancel-timer org-node-context--persist-timer)
+    (setq org-node-context--persist-timer
+          (run-with-idle-timer 30 t #'org-node-context--persist))
+    (org-node-context--persist)))
+
+(defun org-node-context--persistence-file ()
+  "Return path to file that caches previews between sessions."
+  (mkdir org-node-data-dir t)
+  (expand-file-name "org-node-backlink-previews.eld" org-node-data-dir))
+
+(defun org-node-context--persist ()
+  "Sync all cached previews with those on disk."
+  (org-node-context--clean-stale-previews)
+  (when (file-readable-p (org-node-context--persistence-file))
+    (with-temp-file (org-node-context--persistence-file)
+      (insert-file-contents (org-node-context--persistence-file))
+      (let ((data (read (current-buffer))))
+        (when (hash-table-p data)
+          (setq org-node-context--previews
+                (map-merge 'hash-table data org-node-context--previews))
+          (org-node-context--clean-stale-previews)))
+      (erase-buffer)
+      (let ((print-length nil))
+        (prin1 org-node-context--previews (current-buffer)))))
+  nil)
 
 (provide 'org-node-context)
 
 ;;; org-node-context.el ends here
+
+;; Local Variables:
+;; checkdoc-spellcheck-documentation-flag: nil
+;; checkdoc-verb-check-experimental-flag: nil
+;; emacs-lisp-docstring-fill-column: 72
+;; read-symbol-shorthands: (("and$"      . "cond-let--and$")
+;;                          ("and>"      . "cond-let--and>")
+;;                          ("and-let"   . "cond-let--and-let")
+;;                          ("if-let"    . "cond-let--if-let")
+;;                          ("when$"     . "cond-let--when$")
+;;                          ("when-let"  . "cond-let--when-let")
+;;                          ("while-let" . "cond-let--while-let"))
+;; End:

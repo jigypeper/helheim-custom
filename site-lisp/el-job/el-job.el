@@ -1,6 +1,13 @@
 ;;; el-job.el --- Contrived way to call a function using all CPU cores -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2024-2025 Free Software Foundation, Inc.
+;; Copyright (C) 2024-2026 Free Software Foundation, Inc.
+
+;; Author:           Martin Edström <meedstrom@runbox.eu>
+;; URL:              https://github.com/meedstrom/el-job
+;; Created:          2024-10-30
+;; Keywords:         processes
+;; Package-Version:  2.7.4
+;; Package-Requires: ((emacs "29.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -15,13 +22,6 @@
 ;; You should have received a copy of the GNU General Public License
 ;; along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-;; Author:           Martin Edström <meedstrom@runbox.eu>
-;; URL:              https://github.com/meedstrom/el-job
-;; Created:          2024-10-30
-;; Keywords:         processes
-;; Package-Version:  2.6.1
-;; Package-Requires: ((emacs "29.1"))
-
 ;;; Commentary:
 
 ;; Imagine you have a function you'd like to run on a long list of inputs.
@@ -32,68 +32,68 @@
 ;; result as if it had been returned by that `mapcar'.  In the meantime,
 ;; current Emacs does not hang at all.
 
-;; You do need to grok the concept of a callback.
+;; A high-level wrapper is `el-job-parallel-mapcar', which intentionally hangs
+;; Emacs so as to behave as a drop-in for `mapcar' that is merely faster.
 
-;; Public API:
-;; - Function `el-job-old-launch' (main entry point)
-;; - Function `el-job-old-await'
-;; - Function `el-job-old-is-busy'
-;; - Variable `el-job-old-major-version'
-
-;; Dev tools:
-;; - Command `el-job-old-cycle-debug-level'
-;; - Command `el-job-old-show-info'
-;; - Command `el-job-old-kill-all'
+;; The more general `el-job-ng-run' can be used asynchronously.
 
 ;;; Code:
 
-(defvaralias 'el-job-major-version     'el-job-old-major-version)
-(defvaralias 'el-job-max-cores         'el-job-old-max-cores)
-(defvaralias 'el-job--debug-level      'el-job-old--debug-level)
-(defvaralias 'el-job--onetime-canary   'el-job-old--onetime-canary)
-(defvaralias 'el-job--all-jobs         'el-job-old--all-jobs)
+(defconst el-job-internal-version 108)
 
-(require 'el-job-old)
+(require 'el-job-ng)
 
-(defalias 'el-job-launch                      #'el-job-old-launch)
-(defalias 'el-job-kill-all                    #'el-job-old-kill-all)
-(defalias 'el-job-await                       #'el-job-old-await)
-(defalias 'el-job-is-busy                     #'el-job-old-is-busy)
-(defalias 'el-job-cycle-debug-level           #'el-job-old-cycle-debug-level)
-(defalias 'el-job-show-info                   #'el-job-old-show-info)
-(defalias 'el-job--dbg                        #'el-job-old--dbg)
-(defalias 'el-job--locate-lib-in-load-history #'el-job-old--locate-lib-in-load-history)
-(defalias 'el-job--ensure-compiled-lib        #'el-job-old--ensure-compiled-lib)
-(defalias 'el-job--split-evenly               #'el-job-old--split-evenly)
-(defalias 'el-job--split-optimally            #'el-job-old--split-optimally)
-(defalias 'el-job--zip-all                    #'el-job-old--zip-all)
-(defalias 'el-job--windows-cores              #'el-job-old--windows-cores)
-(defalias 'el-job--with                       #'el-job-old--with)
-(defalias 'el-job--spawn-processes            #'el-job-old--spawn-processes)
-(defalias 'el-job--exec-workload              #'el-job-old--exec-workload)
-(defalias 'el-job--poll                       #'el-job-old--poll)
-(defalias 'el-job--reap                       #'el-job-old--reap)
-(defalias 'el-job--handle-output              #'el-job-old--handle-output)
-(defalias 'el-job--disable                    #'el-job-old--disable)
-(defalias 'el-job--sit-until-not              #'el-job-old--sit-until-not)
+;; FIXME: It seems to print the nil message during work
+;;;###autoload
+(defun el-job-parallel-mapcar (fn list &optional inject-vars)
+  "Apply FN to LIST like `mapcar' in one or more parallel processes.
 
-(defvar el-jobs :obsolete)
-(let ((complainer
-       (lambda (_) (error "Some renames in el-job 2.3.0, update your code"))))
-  (fset 'el-job:id             complainer)
-  (fset 'el-job:callback       complainer)
-  (fset 'el-job:n-cores-to-use complainer)
-  (fset 'el-job:ready          complainer)
-  (fset 'el-job:busy           complainer)
-  (fset 'el-job:stderr         complainer)
-  (fset 'el-job:timestamps     complainer)
-  (fset 'el-job:poll-timer     complainer)
-  (fset 'el-job:finish-times   complainer)
-  (fset 'el-job:spawn-args     complainer)
-  (fset 'el-job:past-elapsed   complainer)
-  (fset 'el-job:queued-inputs  complainer)
-  (fset 'el-job:input-sets     complainer)
-  (fset 'el-job:result-sets    complainer))
+Function FN must be known in `load-history' to be defined in some file.
+At spin-up, the parallel processes inherit `load-path', then load that
+file \(even if it is not on `load-path'\), and then get to work.
+
+Function FN should not depend on side effects from previous invocations
+of itself, because each process gets a different subset of LIST.
+
+Unlike the more general `el-job-ng-run', this is meant as a close
+drop-in for `mapcar'.  It behaves like a synchronous function by
+blocking execution until the processes are done, then returns the
+result to the caller.
+
+Quitting kills the processes, much like quitting would interrupt a
+synchronous function.
+
+INJECT-VARS as in `el-job-ng-run'.
+
+For convenience, INJECT-VARS can contain bare symbols instead of cons
+cells, because it is processed by `el-job-ng-vars'.
+
+N/B: A crucial difference from `mapcar' is the temporary loss of scope,
+since FN runs in external processes.
+That means FN will not see let-bindings, runtime variables and the like,
+that you might have meant to have in effect where
+`el-job-parallel-mapcar' is invoked.
+That is why you may need INJECT-VARS.
+
+N/B: The aforementioned loss of scope also means that FN cannot set or
+mutate any variables for you -- the only way it can affect the current
+Emacs session is if the caller of `el-job-parallel-mapcar' does
+something with the return value."
+  (let* (result
+         (vars (el-job-ng-vars (cons '(el-job-ng--child-args . 1) inject-vars)))
+         (id (intern (format "parallel-mapcar.%S.%d" fn (sxhash vars)))))
+    (el-job-ng-run
+     :id id
+     :require (unless (subr-primitive-p (symbol-function fn)) ;; Emacs 28
+                (list (symbol-file fn 'defun t)))
+     :inject-vars vars
+     :funcall-per-input fn
+     :inputs list
+     :callback (lambda (outputs)
+                 (setq result outputs)))
+    (unless (el-job-ng-await-or-die id 86400 "Running el-job-parallel-mapcar")
+      (error "el-job-ng-parallel-mapcar: Timed out (hung for 24 hours): %S" fn))
+    result))
 
 (provide 'el-job)
 

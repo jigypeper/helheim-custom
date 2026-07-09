@@ -1,0 +1,98 @@
+* hel-leader 2.0
+
+A [[https://github.com/anuvyklack/hel][Hel]] extension that serves two purposes:
+- Allows to use =Space= as leader key instead of =C-c= (Emacs native leader) in Hel
+  Normal and Motion states.
+- Allows entering Emacs =C-x=, =C-c=, =M-= and =C-M-= commands without modifier keys.
+
+** Install
+
+#+begin_src emacs-lisp
+;; Dependency
+(use-package s :ensure t)
+
+(use-package hel-leader
+  :vc (:url "https://github.com/anuvyklack/hel-leader.git" :rev "main")
+  :after hel)
+#+end_src
+
+** Usage
+
+- =SPC= (~hel-leader~) ::
+
+  Keys are translated according to the following rules:
+
+  | Input     | Result    |
+  |-----------+-----------|
+  | =SPC=       | =C-c=       |
+  | =SPC c=     | =C-c C-=    |
+  | =SPC x=     | =C-x=       |
+  | =SPC x x=   | =C-x C-=    |
+  | =SPC m=     | =M-=        |
+  | =SPC g=     | =C-M-=      |
+  | =SPC SPC=   | =C-c C-c=   |
+  | =SPC <key>= | =C-c <key>= |
+
+  Modifiers can be combined. After entering =C-x=, pressing =m= or =g= adds =M-= or =C-M-=
+  to the next key.
+
+- =C-w SPC= (~hel-leader-other-window~) ::
+  Same as =SPC=, but the result buffer of the invoked command (if any) will be
+  opened in a new window. Equivalent to =C-w n SPC=.
+
+- =<f1> k= or =C-h k= (~hel-leader-describe-key~) ::
+  Like ~describe-key~, but correctly handles key chords entered through
+  ~hel-leader~. If the [[https://github.com/Wilfred/helpful][Helpful]] package is installed, uses its ~helpful-command~
+  instead.
+
+- =Backspace= (~hel-leader-undo~) :: Undo the last entered key.
+
+** Customization
+
+- ~hel-leader-meta-prefix~ (default ~"m"~) ::
+  The key that acts as the =M-= modifier prefix.
+
+- ~hel-leader-ctrl-meta-prefix~ (default ~"g"~) ::
+  The key that acts as the =C-M-= modifier prefix.
+
+** Examples
+
+| Input        | Result     |
+|--------------+------------|
+| =SPC a=        | =C-c a=      |
+| =SPC c t=      | =C-c C-t=    |
+| =SPC c t t=    | =C-c C-t t=  |
+| =SPC x f=      | =C-x f=      |
+| =SPC x x f=    | =C-x C-f=    |
+| =SPC x m t=    | =C-x M-t=    |
+| =SPC m x=      | =M-x=        |
+| =SPC g x=      | =C-M-x=      |
+| =SPC g S-left= | =C-M-S-left= |
+
+** Difference from the Meow Keypad (and hel-leader v1)
+
+Meow Keypad and hel-leader prior v2.0 implements the [[https://github.com/emacsorphanage/god-mode][God-Mode]] logic. 
+The difference of hel-leader v2 from God-Mode is "swapped" =C-x= behavior:
+
+- *god-mode*
+  | =SPC x=     | =C-x C-= |
+  | =SPC x SPC= | =C-x=    |
+
+- *hel-leader*
+  | =SPC x=   | =C-x=    |
+  | =SPC x x= | =C-x C-= |
+
+# - *god-mode*
+#   - =SPC x= → =C-x C-=
+#   - =SPC x SPC= → =C-x=
+# 
+# - *hel-leader*
+#   - =SPC x= → =C-x=
+#   - =SPC x x= → =C-x C-=
+
+=C-c C-= behaves the same in both *god-mode* and *hel-leader*:
+| =SPC c= | =C-c C-= |
+
+For ~save-buffer~, Hel provides the =ZZ= (like Vim) and =zx= shortcuts because
+saving the current buffer is a very common operation. Saving all buffers
+becomes on =SPC x s= (=C-x s=).

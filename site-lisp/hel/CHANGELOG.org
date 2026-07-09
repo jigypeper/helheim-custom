@@ -1,0 +1,115 @@
+* [0.12.0]
+** Added
+
+- New =r= and =R= commands.
+
+- Integration with [[https://github.com/oantolin/embark][Embark]] package.
+
+** Changed
+
+- *[BREAKING]*
+  Scroll commands have been rewritten from the ground up with better
+  performance and nice animation. Switched the dependency from the built-in
+  pixel-scroll.el to [[https://github.com/jdtsmith/ultra-scroll][ultra-scroll]].
+
+* [0.11.0]
+** Added
+
+- Copy with ~universal-argument~ (=M-u y=) appends selection to the last item in
+  the ~kill-ring~.
+
+- =gg= / =ge= (=G=) make the *first* / *last* selection (cursor) the main one while there
+  are multiple cursors in the buffer.
+
+- =[l= / =]l= — move over pages (=^L= sign in the buffer).
+
+- New key =C-:= to open command palette with only commands relevant to the
+  current buffer.
+
+- Keys for Emacs debugger are added.
+
+- Keys for following Emacs built-in modes are added:
+  - =comint-mode=
+  - =image-mode=
+  - =calendar-mode=
+  - =diff-mode=
+
+** Changed
+
+- Search commands: ~/~, =?=, =n=, =N=, =*=, =M-*= have been rewritten from the ground
+  up. Search matches now remain highlighted in the buffer, and the number
+  of matches is displayed in the mode line. You can clear the highlights
+  with =Esc= or =;=. Closed folds now open automatically when the cursor lands
+  inside them.
+
+- Downcase and upcase commands (=gu= / =gU= or ~`~ / ~M-`~) now accept a numeric
+  argument. The cursor no longer moves after these commands.
+
+- =gw= now calls ~fill-paragraph~ instead of ~fill-region~. It is more generic
+  and falls back to ~fill-region~ when a selection is active.
+
+- *[BREAKING]*
+  =motion= state is renamed to =emacs= state.
+
+- *[BREAKING]*
+  =hel-common.el= file is renamed to =hel-lib.el=
+
+- *[BREAKING]*
+  ~hel-fake-cursor-specific-vars~ variable is renamed to ~hel-fake-cursor-variables~.
+
+- *[BREAKING]*
+  ~hel-unsupported-command~ macro is converted to ~hel-set-unsupported-command~
+  function.
+
+- *[BREAKING]*
+  All extensions are moved to their own repositories.
+
+- *[BREAKING]*
+  =hel-leader= extension is fully rewritten: the [[https://github.com/emacsorphanage/god-mode][God-Mode]] logic is replaced
+  with an original one.
+
+** Fixed
+
+- Compatibility issue with Emacs 31. ([[https://github.com/anuvyklack/hel/issues/17][#17]])
+
+- =Esc= key in text terminal. ([[https://github.com/anuvyklack/hel/issues/1][#1]])
+
+* [0.10.0]
+** Added
+
+- =gv= — restore last multiple cursors positions.
+
+** Changed
+
+- =p= and =P= will paste on the separate line if selection is linewise (i.e. made
+  with =x=).
+
+- =gi= (~imenu~) moved to =go= to leave =gi= for LSP’s "go to implementation".
+
+- =gD= (~xref-find-references~) moved to =gr= to leave =gD= for LSP's "go to
+  declaration".
+
+- *[BREAKING]*
+  ~hel-surround-alist~ variable format has been changed.
+
+- *[BREAKING]*
+  The mechanism for switching the shape and color of the main cursors has been
+  reworked. The single variables for main cursor appearance in each state are
+  removed and replaced with two variables: main cursor shape and face.
+
+  - Removed:
+    - ~hel-normal-state-cursor~
+    - ~hel-insert-state-cursor~
+    - ~hel-motion-state-cursor~
+
+  - Added:
+    - Shape:
+      - ~hel-normal-state-cursor-type~
+      - ~hel-insert-state-cursor-type~
+      - ~hel-motion-state-cursor-type~
+    - Faces:
+      - ~hel-normal-state-main-cursor~
+      - ~hel-insert-state-main-cursor~
+      - ~hel-motion-state-main-cursor~
+
+* [0.9.0]

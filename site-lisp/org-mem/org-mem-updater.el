@@ -1,6 +1,6 @@
 ;;; org-mem-updater.el --- Incremental caching -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025 Free Software Foundation, Inc.
+;; Copyright (C) 2025-2026 Free Software Foundation, Inc.
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -20,126 +20,167 @@
 ;; Optional mechanisms to update the tables in just-in-time fashion,
 ;; reducing our need to do `org-mem--full-scan' so often.
 
-;; Technically, repeating a full scan is never needed *IF* we use these hooks
-;; correctly.  However, that is hard and humans are fallible.
-
-;; If a full scan is sufficiently performant, you can just do it more often,
-;; instead of using these hooks at all.  It is also a simple way to detect
-;; filesystem changes made by other Emacsen or the command line.
-
 ;;; Code:
 
 (require 'cl-lib)
 (require 'subr-x)
 (require 'llama)
+(require 'el-job)
 (require 'org-mem)
 (require 'org-mem-parser)
+(define-obsolete-variable-alias 'org-mem-updater--timer 'org-mem-updater--reset-timer "0.28.0 (2026-02-07)")
 
 
 ;;; Targeted-scan
 
-(defun org-mem-updater--handle-rename (file newname &rest _)
-  "Arrange to scan NEWNAME for entries and links, and forget FILE."
-  (org-mem-updater--handle-delete file)
-  (unless (memq 'move-file-to-trash
-                (cl-loop for i from 1 to 15 collect (cadr (backtrace-frame i))))
-    (cl-assert newname) ;; b/c below func would accept nil
-    (org-mem-updater--handle-save newname)))
+;;;###autoload
+(defun org-mem-updater-update (&optional synchronous files)
+  "Update cache for each file that has changed, appeared or disappeared.
 
-(defun org-mem-updater--handle-delete (file &optional _trash)
-  "Forget entries and links in FILE.
+If SYNCHRONOUS, block Emacs until done.
+If interrupted by a quit while blocking, cancel the update.
 
-If FILE differs from the name by which the actual file is listed in our
-tables, because a parent directory is a symlink or the abbreviation
-differs, try to discover the known name variant, then forget the data
-from that file.
+If FILES, scan only FILES specifically.
+This is a hack you should almost never need, but can be used to sidestep
+rare performance issues with scanning the filesystem.
 
-However, do not do so when FILE itself satisfies `file-symlink-p'.
-In that case, there may be nothing wrong with the known name."
-  (when (and (seq-find (##string-suffix-p % file) org-mem-suffixes)
-             ;; Don't accidentally scrub Tramp paths from org-id-locations
-             ;; just because we chose to never scan them.
-             (not (file-remote-p file)))
-    (let ((bad (list file))
-          (cached-true (gethash file org-mem--wild-filename<>truename)))
-      (when (and cached-true (not (file-symlink-p file)))
-        (push cached-true bad))
-      (org-mem-updater--forget-file-contents bad)
-      (org-mem--invalidate-file-names bad)
-      (org-mem--rebuild-specially-indexed-tables)
-      (mapc #'clrhash (hash-table-values org-mem--key<>subtable)))))
+If you must pass FILES, be sure to include the true name of every file
+touched by what you were doing, such as refiling an Org subtree from one
+file into another, or renaming one file name to another.
+Do not use `buffer-file-truename' for this, because it is a lie.
+Even \(expand-file-name buffer-file-truename) may not be the true name.
 
-(defun org-mem-updater--handle-save (&optional file)
-  "Arrange to scan entries and links in FILE, or current buffer file."
-  (unless file (setq file buffer-file-name))
-  (when (and (seq-find (##string-suffix-p % file) org-mem-suffixes)
-             (not (backup-file-name-p file)))
-    (org-mem-updater--scan-targeted file)))
+Be sure also to include the old true name of any files that have been
+deleted or renamed, so that they may be removed from org-mem tables.
+If you mess up the tables, use command `org-mem-reset'."
+  (unless files
+    (setq files
+          (let* ((db-files (copy-hash-table org-mem--truename<>metadata))
+                 (modified-files
+                  (cl-loop
+                   for (truename . attr) in (org-mem--truenames-and-attrs)
+                   as disk-mtime = (file-attribute-modification-time attr)
+                   as db-mtime = (progn (remhash truename db-files)
+                                        (org-mem-file-mtime truename))
+                   when (or (not db-mtime) ;; New file.
+                            (not (time-equal-p db-mtime disk-mtime)))
+                   collect truename))
+                 (removed-files
+                  (hash-table-keys db-files)))
+            (append removed-files modified-files))))
+  (when files
+    ;; If async job of ID `org-mem-updater' is already ongoing, this will
+    ;; cancel that and run a new one.  That's fine, because mtimes of those
+    ;; files being scanned won't have changed in our db (ongoing => results
+    ;; not yet written), so we've automatically picked them up again.
+    (el-job-ng-run
+     :id 'org-mem-updater
+     :inject-vars (append (org-mem--mk-work-vars)
+                          (el-job-ng-vars org-mem-inject-vars))
+     :require (cons 'org-mem-parser org-mem-load-features)
+     :inputs files
+     :funcall-per-input #'org-mem-parser--parse-file
+     :callback #'org-mem-updater--finalize-targeted-scan)
+    (when synchronous
+      (el-job-ng-await-or-die
+       'org-mem-updater 3600
+       (format "Running org-mem-updater-update... (files: %S)" files)))))
 
-(defun org-mem-updater--scan-targeted (file)
-  "Arrange to scan FILE or FILEs."
-  (let ((truenames (thread-last
-                     (ensure-list file)
-                     (seq-keep #'org-mem--truename-maybe)
-                     (seq-uniq)
-                     (seq-filter (##cl-loop for xclude in org-mem-exclude
-                                            never (string-search xclude %))))))
-    (el-job-launch :id 'org-mem-updater
-                   :inject-vars (append (org-mem--mk-work-vars) org-mem-inject-vars)
-                   :load-features (append '(org-mem-parser) org-mem-load-features)
-                   :inputs truenames
-                   :funcall-per-input #'org-mem-parser--parse-file
-                   :callback #'org-mem-updater--finalize-targeted-scan)))
-
-(defun org-mem-updater--finalize-targeted-scan (parse-results _job)
-  "Handle PARSE-RESULTS from `org-mem-updater--scan-targeted'."
+(defun org-mem-updater--finalize-targeted-scan (parse-results)
+  "Handle PARSE-RESULTS from `org-mem-updater-update'."
   (run-hook-with-args 'org-mem-pre-targeted-scan-functions parse-results)
-  (seq-let (bad-paths file-data entries links problems) parse-results
-    (org-mem-updater--forget-file-contents (append bad-paths (mapcar #'car file-data)))
-    (org-mem--invalidate-file-names bad-paths)
-    (mapc #'clrhash (hash-table-values org-mem--key<>subtable))
-    (with-current-buffer
-        (setq org-mem-scratch (get-buffer-create " *org-mem-scratch*" t))
-      (dolist (datum file-data)
-        (puthash (car datum) datum org-mem--truename<>metadata)
-        (run-hook-with-args 'org-mem-record-file-functions datum))
-      (dolist (entry entries)
-        (org-mem--record-entry entry)
-        (run-hook-with-args 'org-mem-record-entry-functions entry))
-      (dolist (link links)
-        (push link (gethash (org-mem-link--internal-entry-id link)
-                            org-mem--internal-entry-id<>links))
-        (run-hook-with-args 'org-mem-record-link-functions link)))
+  (mapc #'clrhash (hash-table-values org-mem--key<>subtable))
+  (let (problems)
+    (with-current-buffer (get-buffer-create " *org-mem-fundamental-scratch*" t)
+      (cl-loop for (bad-path problem file-datum entries links) in parse-results do
+               (when bad-path (truename-cache-invalidate bad-path))
+               (when problem (push problem problems))
+               (let ((file (car file-datum)))
+                 (when file
+                   (dolist (entry (gethash file org-mem--truename<>entries))
+                     (remhash (org-mem-entry-id entry) org-mem--id<>entry)
+                     (remhash (org-mem-entry-title-maybe entry) org-mem--title<>id)
+                     (remhash (org-mem-entry-pseudo-id entry) org-mem--pseudo-id<>links)
+                     (run-hook-with-args 'org-mem--forget-entry-functions entry))
+                   (remhash file org-mem--truename<>entries)
+                   (remhash file org-mem--truename<>metadata)
+                   (run-hook-with-args 'org-mem--forget-file-functions file) ; Can deprecate
+                   (puthash file file-datum org-mem--truename<>metadata)
+                   (run-hook-with-args 'org-mem--record-file-functions file-datum)))
+               (dolist (entry entries)
+                 (org-mem--record-entry entry)
+                 (run-hook-with-args 'org-mem--record-entry-functions entry))
+               (dolist (link links)
+                 (push link (gethash (org-mem-link-entry-pseudo-id link)
+                                     org-mem--pseudo-id<>links))
+                 (run-hook-with-args 'org-mem--record-link-functions link))))
     (org-mem--rebuild-specially-indexed-tables)
-    (dolist (prob problems)
-      (push prob org-mem--problems))
+
     (run-hook-with-args 'org-mem-post-targeted-scan-functions parse-results)
-    (when bad-paths
-      (let ((good-paths (seq-keep #'org-mem--truename-maybe bad-paths)))
-        (org-mem-updater--scan-targeted (seq-difference good-paths bad-paths))))
     (when problems
+      (setq org-mem--problems (append problems org-mem--problems))
       (message "Scan had problems, see M-x org-mem-list-problems"))))
 
-(defun org-mem-updater--forget-file-contents (files)
-  "Delete from tables, most info relating to FILES and their contents.
-You should also run `org-mem--invalidate-file-names'
-and `org-mem--rebuild-specially-indexed-tables'."
-  (setq files (ensure-list files))
-  (when files
-    (with-current-buffer
-        (setq org-mem-scratch (get-buffer-create " *org-mem-scratch*" t))
-      (dolist (file files)
-        (dolist (entry (gethash file org-mem--truename<>entries))
-          (remhash (org-mem-entry-id entry) org-mem--id<>entry)
-          (remhash (org-mem-entry-title-maybe entry) org-mem--title<>id)
-          (remhash (org-mem-entry--internal-id entry) org-mem--internal-entry-id<>links)
-          (run-hook-with-args 'org-mem-forget-entry-functions entry))
-        (remhash file org-mem--truename<>entries)
-        (remhash file org-mem--truename<>metadata)
-        (run-hook-with-args 'org-mem-forget-file-functions file)))))
+
+;;; Mode
+
+(defvar org-mem-updater--reset-timer (timer-create)
+  "Timer for intermittently running `org-mem--scan-full'.")
+
+(defun org-mem-updater-adjust-reset-timer (&rest _)
+  "Adjust `org-mem-updater--reset-timer' based on duration of last full scan.
+If timer not running, start it.
+Override this if you prefer different timer delays, or no timer."
+  (let ((new-delay (* 10 (1+ org-mem--time-elapsed))))
+    (when (or (not (member org-mem-updater--reset-timer timer-idle-list))
+              ;; Don't enter an infinite loop -- idle timers can be a footgun.
+              (not (> (float-time (or (current-idle-time) 0))
+                      new-delay)))
+      (cancel-timer org-mem-updater--reset-timer)
+      (setq org-mem-updater--reset-timer
+            (run-with-idle-timer new-delay t #'org-mem--scan-full)))))
+
+(defvar org-mem-updater--debounce-timer nil)
+(defun org-mem-updater--update-soon (&optional file &rest _)
+  "Schedule to run `org-mem-updater-update' very soon.
+
+Designed for `after-save-hook' and as advice for `delete-file' and
+`rename-file'.  Such functions might be called many times in a loop,
+and this design tries to avoid invoking `org-mem-updater-update'
+for every FILE, but wait and do a massed invocation afterwards."
+  (setq file (or file (buffer-file-name (buffer-base-buffer))))
+  (when (and (stringp file) (cl-some (##string-suffix-p % file) org-mem-suffixes))
+    (if (memq org-mem-updater--debounce-timer timer-list)
+        (timer-set-time org-mem-updater--debounce-timer
+                        (time-add (current-time) 0.5))
+      (setq org-mem-updater--debounce-timer
+            (run-with-timer 0.5 nil #'org-mem-updater-update)))))
+
+;;;###autoload
+(define-minor-mode org-mem-updater-mode
+  "Keep Org-mem cache up to date."
+  :global t
+  :group 'org-mem
+  (require 'org-mem-updater)
+  (if org-mem-updater-mode
+      (progn
+        (add-hook 'org-mem-post-full-scan-functions #'org-mem-updater-adjust-reset-timer 90)
+        (add-hook 'after-save-hook                  #'org-mem-updater--update-soon)
+        (advice-add 'rename-file :after             #'org-mem-updater--update-soon)
+        (advice-add 'delete-file :after             #'org-mem-updater--update-soon)
+        ;; Enable timer just in case the initial scan fails for any reason.
+        ;; TODO: If the scan hangs forever every time, we don't really want to
+        ;; re-run on a timer... Find a way to warn.
+        (org-mem-updater-adjust-reset-timer)
+        (org-mem--scan-full))
+    (remove-hook 'org-mem-post-full-scan-functions #'org-mem-updater-adjust-reset-timer)
+    (remove-hook 'after-save-hook                  #'org-mem-updater--update-soon)
+    (advice-remove 'rename-file                    #'org-mem-updater--update-soon)
+    (advice-remove 'delete-file                    #'org-mem-updater--update-soon)
+    (cancel-timer org-mem-updater--reset-timer)))
 
 
-;;; Instant placeholders
+;;; Instant placeholders (OBSOLETE)
 
 (declare-function org-current-level "org")
 (declare-function org-element-context "org-element")
@@ -162,26 +203,11 @@ and `org-mem--rebuild-specially-indexed-tables'."
 (defvar org-trust-scanner-tags)
 (defvar org-use-tag-inheritance)
 
-(defun org-mem-updater-ensure-buffer-file-known ()
-  "Record basic file metadata if not already known.
-Use this if you cannot wait for `org-mem-updater-mode' to pick it up."
-  (require 'org)
-  (when (and buffer-file-name
-             (derived-mode-p 'org-mode)
-             (file-exists-p buffer-file-name))
-    (let ((file (file-truename buffer-file-name)))
-      (unless (gethash file org-mem--truename<>metadata)
-        (puthash file
-                 (list file
-                       (file-attributes file)
-                       (line-number-at-pos (point-max) t)
-                       (point-max))
-                 org-mem--truename<>metadata)))))
-
 (defun org-mem-updater-ensure-link-at-point-known (&rest _)
   "Record the link at point.
 Use this if you cannot wait for `org-mem-updater-mode' to pick it up.
 No support for citations."
+  (declare (obsolete nil "0.30.0 (2026-02-18)"))
   (require 'org)
   (require 'org-element-ast)
   (when (and buffer-file-name
@@ -195,13 +221,14 @@ No support for citations."
                             org-mem-exclude))
         (org-mem-updater-ensure-buffer-file-known)
         (let ((link (org-mem-updater-mk-link-atpt)))
-          (push link (gethash (org-mem-link--internal-entry-id link)
-                              org-mem--internal-entry-id<>links))
-          (run-hook-with-args 'org-mem-record-link-functions link))))))
+          (push link (gethash (org-mem-link-entry-pseudo-id link)
+                              org-mem--pseudo-id<>links))
+          (run-hook-with-args 'org-mem--record-link-functions link))))))
 
 (defun org-mem-updater-ensure-id-node-at-point-known ()
   "Record ID-node at point.
 Use this if you cannot wait for `org-mem-updater-mode' to pick it up."
+  (declare (obsolete nil "0.30.0 (2026-02-18)"))
   (require 'org)
   (require 'ol)
   (when (and buffer-file-name
@@ -218,11 +245,30 @@ Use this if you cannot wait for `org-mem-updater-mode' to pick it up."
             (org-mem-updater-ensure-buffer-file-known)
             (org-mem--record-entry (org-mem-updater-mk-entry-atpt))))))))
 
+(defun org-mem-updater-ensure-buffer-file-known ()
+  "Record basic file metadata if not already known.
+Use this if you cannot wait for `org-mem-updater-mode' to pick it up."
+  (declare (obsolete nil "0.30.0 (2026-02-18)"))
+  (require 'org)
+  (when (and buffer-file-name
+             (derived-mode-p 'org-mode)
+             (file-exists-p buffer-file-name))
+    (let ((file (file-truename buffer-file-name)))
+      (unless (gethash file org-mem--truename<>metadata)
+        (puthash file
+                 (list file
+                       (file-attributes file)
+                       (line-number-at-pos (point-max) t)
+                       (point-max))
+                 org-mem--truename<>metadata)))))
+
+;; Obsolete but good to keep as reference
 (defun org-mem-updater-mk-link-atpt ()
   "Return an `org-mem-link' object appropriate for link at point.
 It is not associated with any entries or files, however.
 Return nil if no link at point.
 No support for citations."
+  (declare (obsolete nil "0.30.0 (2026-02-18)"))
   (require 'org)
   (require 'org-element-ast)
   (if-let* ((el (org-element-context))
@@ -230,7 +276,11 @@ No support for citations."
       (let ((type (org-element-property :type el))
             (desc-beg (org-element-property :contents-begin el))
             (desc-end (org-element-property :contents-end el))
-            (truename (file-truename buffer-file-name)))
+            (truename (file-truename buffer-file-name))
+            (entry-text (buffer-substring (if (org-before-first-heading-p)
+                                              (point-min)
+                                            (org-entry-beginning-position))
+                                          (org-entry-end-position))))
         (record 'org-mem-link
                 truename
                 (point)
@@ -239,17 +289,17 @@ No support for citations."
                 (and desc-beg (buffer-substring-no-properties desc-beg desc-end))
                 nil
                 (org-entry-get-with-inheritance "ID")
-                nil ;; HACK: supplement field is nil
-                (+ (org-mem-parser--hash truename)
-                   (if (org-before-first-heading-p)
-                       0
-                     (org-entry-beginning-position)))))
+                nil ;; HACK: the supplement field is nil
+                (org-mem-parser--mk-id (file-attributes truename)
+                                       entry-text)))
     (error "No link at point %d in %s" (point) (current-buffer))))
 
+;; Obsolete but good to keep as reference
 (defun org-mem-updater-mk-entry-atpt ()
   "Return an `org-mem-entry' object appropriate for entry at point.
 It is not associated with any links or files, however.
 Some fields are incomplete or left at nil."
+  (declare (obsolete nil "0.30.0 (2026-02-18)"))
   (require 'org)
   (require 'ol)
   (let* ((heading (org-get-heading t t t t))
@@ -261,7 +311,11 @@ Some fields are incomplete or left at nil."
          (scheduled (cdr (assoc "SCHEDULED" properties)))
          (ftitle (org-get-title))
          (title (or heading ftitle))
-         (truename (file-truename buffer-file-name)))
+         (truename (file-truename buffer-file-name))
+         (entry-text (buffer-substring (if (org-before-first-heading-p)
+                                           (point-min)
+                                         (org-entry-beginning-position))
+                                       (org-entry-end-position))))
     (when title
       (setq title (org-link-display-format (substring-no-properties title))))
     (record 'org-mem-entry
@@ -297,10 +351,12 @@ Some fields are incomplete or left at nil."
             (org-mem-updater--tags-at-point-inherited-only)
             (org-get-tags nil t)
             (when heading (org-get-todo-state))
-            (+ (org-mem-parser--hash truename) (if heading pos 0)))))
+            (org-mem-parser--mk-id (file-attributes truename)
+                                   entry-text))))
 
 (defun org-mem-updater--tags-at-point-inherited-only ()
   "Like `org-get-tags', but get only the inherited tags."
+  (declare (obsolete nil "0.30.0 (2026-02-18)"))
   (require 'org)
   (let ((all-tags (if org-use-tag-inheritance
                       (org-get-tags)
@@ -311,49 +367,9 @@ Some fields are incomplete or left at nil."
              when (get-text-property 0 'inherited tag)
              collect (substring-no-properties tag))))
 
-
-;;; Mode
-
-(defvar org-mem-updater--timer (timer-create)
-  "Timer for intermittently running `org-mem--scan-full'.")
-
-(defun org-mem-updater--adjust-timer (&rest _)
-  "Adjust `org-mem-updater--timer' based on duration of last full scan.
-If timer not running, start it.
-Override this if you prefer different timer delays, or no timer."
-  (let ((new-delay (* 10 (1+ org-mem--time-elapsed))))
-    (when (or (not (member org-mem-updater--timer timer-idle-list))
-              ;; Don't enter an infinite loop -- idle timers can be a footgun.
-              (not (> (float-time (or (current-idle-time) 0))
-                      new-delay)))
-      (cancel-timer org-mem-updater--timer)
-      (setq org-mem-updater--timer
-            (run-with-idle-timer new-delay t #'org-mem--scan-full)))))
-
-;;;###autoload
-(define-minor-mode org-mem-updater-mode
-  "Keep Org-mem cache up to date."
-  :global t
-  :group 'org-mem
-  (require 'org-mem-updater)
-  (if org-mem-updater-mode
-      (progn
-        (add-hook 'org-mem-post-full-scan-functions #'org-mem-updater--adjust-timer 90)
-        (add-hook 'after-save-hook                  #'org-mem-updater--handle-save)
-        (advice-add 'rename-file :after             #'org-mem-updater--handle-rename)
-        (advice-add 'delete-file :after             #'org-mem-updater--handle-delete)
-        (org-mem-updater--adjust-timer)
-        (org-mem--scan-full))
-    (remove-hook 'org-mem-post-full-scan-functions #'org-mem-updater--adjust-timer)
-    (remove-hook 'after-save-hook                  #'org-mem-updater--handle-save)
-    (advice-remove 'rename-file                    #'org-mem-updater--handle-rename)
-    (advice-remove 'delete-file                    #'org-mem-updater--handle-delete)
-    (cancel-timer org-mem-updater--timer)))
-
-(org-mem--def-whiny-alias 'org-mem-updater-ensure-entry-at-point-known   #'org-mem-updater-ensure-id-node-at-point-known "2025-05-21" "November")
-(org-mem--def-whiny-alias 'org-mem-updater--activate-timer   #'org-mem-updater--adjust-timer "2025-05-24" "November")
 (defvar org-mem-updater--id-or-ref-target<>old-links :obsolete)
 (defvar org-mem-updater--new-id-or-ref-targets :obsolete)
+(define-obsolete-function-alias 'org-mem-updater--adjust-timer #'org-mem-updater-adjust-reset-timer "0.28.0 (2026-02-07)")
 
 (provide 'org-mem-updater)
 

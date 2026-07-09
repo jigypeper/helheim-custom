@@ -25,6 +25,35 @@
 (require 'org-mem-updater)
 (require 'org-mem-parser)
 
+(ert-deftest org-mem-parser--make-todo-regexp ()
+  (let ((org-todo-keywords
+         '((sequence "TODO(t)" "PROJ(p)" "LOOP(r)" "STRT(s)" "WAIT(w)" "HOLD(h)"
+                     "IDEA(i)" "|" "DONE(d)" "KILL(k)")
+           (sequence "[ ](T)" "[-](S)" "[?](W)" "|" "[X](D)")
+           (sequence "|" "OKAY(o)" "YES(y)" "NO(n)"))))
+    (should (equal
+             (org-mem-parser--make-todo-regexp
+              (string-join (apply #'append (mapcar #'cdr org-todo-keywords))
+                           " "))
+             "\\(?:DONE\\|HOLD\\|IDEA\\|KILL\\|LOOP\\|NO\\|OKAY\\|PROJ\\|STRT\\|TODO\\|WAIT\\|YES\\|\\[\\(?:[ ?X-]]\\)\\)"))))
+
+(ert-deftest org-mem-translate-parse-results ()
+  (should
+   (equal
+    (let ((ng-style-results
+           '((nil        ("problem1" "" 0 (a . b)) ("fdata1" nil 0 0 t) ([entry1a] [entry1b]) ([link1a] [link1b]))
+             (nil        nil                       ("fdata2" nil 0 0 t) ([entry2a] [entry2b]) ([link2a] [link2b]))
+             ("badpath3" nil                       nil              nil                   nil)
+             ("badpath4" nil                       nil              nil                   nil)
+             (nil        ("problem5" "" 0 (a . b)) ("fdata5" nil 0 0 t) ([entry5a] [entry5b]) ([link5a] [link5b])))))
+      (org-mem-translate-parse-results ng-style-results) ;; In case of in-place modification
+      (org-mem-translate-parse-results ng-style-results))
+    '(("badpath3" "badpath4")
+      (("fdata1" nil 0 0 t) ("fdata2" nil 0 0 t) ("fdata5" nil 0 0 t))
+      ([entry1a] [entry1b] [entry2a] [entry2b] [entry5a] [entry5b])
+      ([link1a]  [link1b]  [link2a]  [link2b]  [link5a]  [link5b])
+      (("problem1" "" 0 (a . b)) ("problem5" "" 0 (a . b)))))))
+
 (ert-deftest test-split-refs-field ()
   (let ((result
          (org-mem--split-roam-refs-field
@@ -138,7 +167,7 @@
     (should (file-equal-p (org-mem-file-truename l) (org-mem-file l)))
     (should (stringp (org-mem-link-target l)))
     (should (natnump (org-mem-link-pos l)))
-    (should (natnump (org-mem-link--internal-entry-id l)))
+    (should (natnump (org-mem-link-entry-pseudo-id l)))
     (should (booleanp (org-mem-link-citation-p l)))
     (when (org-mem-link-type l)        (should (stringp (org-mem-link-type l))))
     (when (org-mem-link-description l) (should (stringp (org-mem-link-description l))))

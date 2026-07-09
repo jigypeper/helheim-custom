@@ -1,6 +1,6 @@
 ;;; org-mem-roamy.el --- Make data like org-roam does -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025 Free Software Foundation, Inc.
+;; Copyright (C) 2025-2026 Free Software Foundation, Inc.
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -26,10 +26,11 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'sqlite)
+(require 'eieio)
 (require 'org-mem)
 (require 'llama)
-(declare-function eieio-oref "eieio-core")
 (defvar org-mem-updater-mode)
+(eieio-declare-slots handle)
 
 (defcustom org-mem-roamy-do-overwrite-real-db nil
   "Whether to overwrite the database file at `org-roam-db-location'.
@@ -358,7 +359,7 @@ With SPECIFIC-FILES, only return data that involves those files."
   (setq org-mem-roamy--untitled-id-nodes nil)
   (setq specific-files
         (nconc specific-files
-               (seq-keep #'org-mem--truename-maybe specific-files)))
+               (seq-keep #'truename-cache-get-p specific-files)))
   (let (file-rows
         node-rows
         alias-rows
@@ -462,7 +463,9 @@ With SPECIFIC-FILES, only return data that involves those files."
     (list file
           (org-mem-file-title-strict file)
           ""                            ; HACK: SHA1 hashing is slow, skip
-          ;; HACK: So things don't appear newer b/c of rounding
+          ;; HACK: Use integer representation b/c list-style time values take
+          ;; nontrivial CPU cycles to print to string.  Add 1 second so things
+          ;; don't appear newer b/c of rounding.
           (1+ (time-convert atime 'integer))
           (1+ (time-convert mtime 'integer)))))
 
@@ -473,7 +476,7 @@ With SPECIFIC-FILES, only return data that involves those files."
 (defun org-mem-roamy--update-db (parse-results)
   "Update currently connected DB, with data from PARSE-RESULTS.
 Designed for `org-mem-post-targeted-scan-functions'."
-  (seq-let (bad-paths file-data entries) parse-results
+  (seq-let (bad-paths file-data entries) (org-mem-translate-parse-results parse-results)
     (when (or bad-paths file-data)
       (let* ((T (current-time))
              (db (eieio-oref (org-mem-roamy-db) 'handle))

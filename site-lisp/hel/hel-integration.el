@@ -1,35 +1,36 @@
-;;; hel-integration.el --- Integration with other packages -*- lexical-binding: t; -*-
+;;; hel-integration.el --- Integration with other packages -*- lexical-binding: t -*-
 ;;
-;; Copyright © 2025 Yuriy Artemyev
+;; Copyright © 2025-2026 Yuriy Artemyev
 ;;
 ;; Author: Yuriy Artemyev <anuvyklack@gmail.com>
 ;; Maintainer: Yuriy Artemyev <anuvyklack@gmail.com>
-;; Version: 0.0.1
+;; Version: 0.12.0
 ;; Homepage: https://github.com/anuvyklack/hel
-;; Package-Requires: ((emacs "29.1"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
 ;;; Commentary:
 ;;
-;;  Hel integration with other packages.
+;;  Hel integration with other Emacs packages.
 ;;
 ;;; Code:
 
-(require 'hel-core)
+(eval-when-compile (require 'hel-macros))
+(require 'hel-vars)
 (require 'hel-multiple-cursors-core)
-(require 'hel-common)
+(require 'hel-lib)
+(require 'hel-core)
 (require 'hel-commands)
 
 ;;; Integration multiple cursors with Emacs functionality
 
 ;; M-x
 (hel-advice-add 'execute-extended-command :after #'hel--execute-for-all-cursors-a)
-(put 'execute-extended-command 'multiple-cursors 'false)
+(hel-set-single-cursor-command 'execute-extended-command)
 
 ;; M-X
 (hel-advice-add 'execute-extended-command-for-buffer :after #'hel--execute-for-all-cursors-a)
-(put 'execute-extended-command-for-buffer 'multiple-cursors 'false)
+(hel-set-single-cursor-command 'execute-extended-command-for-buffer)
 
 (hel-define-advice current-kill (:before (n &optional _do-not-move) hel)
   "Make sure pastes from other programs are added to `kill-ring's
@@ -71,24 +72,85 @@ in the command loop, and the fake cursors can pick up on those instead."
 (hel-cache-input read-quoted-char)
 (hel-cache-input read-from-kill-ring)
 (hel-cache-input read-char-from-minibuffer)
-(hel-cache-input register-read-with-preview)  ; used by read-string
+(hel-cache-input read-char-by-name) ; is used by `insert-char'
+(hel-cache-input register-read-with-preview)  ; is used by `read-string'
 
 ;;; Commands that don't work with multiple-cursors
 
-(hel-unsupported-command isearch-forward)
-(hel-unsupported-command isearch-backward)
+(hel-set-unsupported-command 'isearch-forward)
+(hel-set-unsupported-command 'isearch-backward)
 
 ;; Between invocations, `cycle-spacing' stores internal data in the
 ;; `cycle-spacing--context' variable. The original position is stored
 ;; as a number rather than a marker, and invalidates when other cursors
 ;; modify the buffer content.
-(hel-unsupported-command cycle-spacing)
+(hel-set-unsupported-command 'cycle-spacing)
 
 ;; Replace it with `just-one-space' while multiple-cursors are active.
 (hel-keymap-set hel-multiple-cursors-mode-map
   "<remap> <cycle-spacing>" #'just-one-space)
 
-;;; Advices for built-in commands
+;;; Update cursor color on theme change
+
+(defun hel--update-main-cursor-color (color)
+  (set-face-attribute 'hel-normal-state-main-cursor nil :background color)
+  (hel-update-cursor))
+
+(hel-advice-add 'set-cursor-color :after #'hel--update-main-cursor-color)
+
+(defun hel--handle-theme-change (_theme)
+  (hel--update-main-cursor-color (face-background 'cursor)))
+
+(defun hel--handle-theme-change-h ()
+  (if hel-mode
+      (progn
+        (add-hook 'enable-theme-functions  #'hel--handle-theme-change)
+        (add-hook 'disable-theme-functions #'hel--handle-theme-change))
+    (remove-hook 'enable-theme-functions  #'hel--handle-theme-change)
+    (remove-hook 'disable-theme-functions #'hel--handle-theme-change)))
+
+(add-hook 'hel-mode-hook #'hel--handle-theme-change-h)
+
+;;; ESC, C-i and C-m keys
+
+(defun hel-esc (map)
+  "Translate `\\e' to `escape' if no further event arrives."
+  (if (and (not hel-inhibit-esc)
+           (or hel-local-mode
+               (active-minibuffer-window))
+           (let ((keys (this-single-command-keys)))
+             (and (length> keys 0)
+                  (= (aref keys (1- (length keys))) ?\e)))
+           (sit-for hel-esc-delay))
+      (prog1 [escape]
+        (when defining-kbd-macro
+          (end-kbd-macro)
+          (setq last-kbd-macro (vconcat last-kbd-macro [escape]))
+          (start-kbd-macro t t)))
+    map))
+
+(defun hel-setup-terminal-keys (frame)
+  "Make Emacs correctly handle ESC in terminal, and distinguish TAB from
+C-i and RET from C-m."
+  (with-selected-frame frame
+    (if (eq t (terminal-live-p (frame-terminal frame)))
+        ;; Text terminal
+        (progn
+          (define-key input-decode-map [?\e]
+                      (list 'menu-item "" esc-map :filter #'hel-esc))
+          ;; Kitty keyboard protocol:
+          ;; https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+          (define-key input-decode-map "\e[105;5u" [C-i])
+          (define-key input-decode-map "\e[109;5u" [C-m]))
+      ;; GUI Emacs
+      (keymap-set input-decode-map "C-i" [C-i])
+      (keymap-set input-decode-map "C-m" [C-m]))))
+
+;; Patch existing and future terminals.
+(-each (frame-list) #'hel-setup-terminal-keys)
+(add-hook 'after-make-frame-functions #'hel-setup-terminal-keys)
+
+;;; Advices for general commands not related to particular packages
 
 (dolist (cmd '(fill-region    ; gq
                indent-region  ; =
@@ -97,104 +159,54 @@ in the command loop, and the fake cursors can pick up on those instead."
 
 (hel-advice-add 'clone-indirect-buffer :before #'hel-deactivate-mark-a)
 
-;;; Distinguish `TAB' from `C-i' and `RET' from `C-m'
-
-(defun hel-make-C-i-and-C-m-available ()
-  "Make Emacs distinguish `TAB' from `C-i' and `RET' from `C-m'."
-  (when (display-graphic-p) ;; do translation only in gui
-    (keymap-set input-decode-map "C-i" [C-i])
-    (keymap-set input-decode-map "C-m" [C-m])))
-
-(hel-make-C-i-and-C-m-available)
-
-;; For daemon mode
-(add-hook 'after-make-frame-functions
-          (defun hel--after-make-frame-hook (frame)
-            (with-selected-frame frame
-              (hel-make-C-i-and-C-m-available))))
-
-;; (single-key-description 'C-i)
-;; (key-valid-p "<C-i>")
-;; (key-valid-p "C-<i>")
-
-;;; emacs-lisp-mode (elisp)
-
-;; Fontification for Hel macros.
-(font-lock-add-keywords
- 'emacs-lisp-mode
- (eval-when-compile
-   `((,(concat "^\\s-*("
-               (regexp-opt '("hel-define-command") t)
-               "\\s-+\\(" (rx lisp-mode-symbol) "\\)")
-      (1 'font-lock-keyword-face)
-      (2 'font-lock-function-name-face nil t))
-     (,(concat "^\\s-*("
-               (regexp-opt '("hel-defvar-local") t)
-               "\\s-+\\(" (rx lisp-mode-symbol) "\\)")
-      (1 'font-lock-keyword-face)
-      (2 'font-lock-variable-name-face nil t)))))
-
-;; `emacs-lisp-mode' is inherited from `lisp-data-mode'.
-(add-hook 'lisp-data-mode-hook  #'hel-configure-for-emacs-lisp)
-
-(defun hel-configure-for-emacs-lisp ()
-  ;; Add legacy quotes marks to Hel surround functionality.
-  (push '(?` :pair ("`" . "'")) hel-surround-alist)
-  (push '(?' :pair ("`" . "'")) hel-surround-alist)
-
-  ;; Teach `imenu' about Hel macros.
-  (dolist (i (eval-when-compile
-               `(("Variables"
-                  ,(concat "^\\s-*("
-                           (regexp-opt '("hel-defvar-local") t)
-                           "\\s-+\\(" (rx lisp-mode-symbol) "\\)")
-                  2)
-                 (nil ;; top level
-                  ,(concat "^\\s-*("
-                           (regexp-opt '("hel-define-command") t)
-                           "\\s-+'?\\(" (rx lisp-mode-symbol) "\\)")
-                  2))))
-    (cl-pushnew i imenu-generic-expression :test #'equal)))
-
-(dolist (keymap (list emacs-lisp-mode-map lisp-data-mode-map))
-  (hel-keymap-set keymap :state 'normal
-    "m `"   #'hel-mark-inner-legacy-quoted
-    "m '"   #'hel-mark-inner-legacy-quoted
-    "m i `" #'hel-mark-inner-legacy-quoted
-    "m i '" #'hel-mark-inner-legacy-quoted
-    "m a `" #'hel-mark-a-legacy-quoted
-    "m a '" #'hel-mark-a-legacy-quoted))
-
-(hel-define-command hel-mark-inner-legacy-quoted ()
-  :multiple-cursors t
-  :merge-selections t
-  (interactive)
-  (-when-let ((_ beg end _) (hel-surround-4-bounds-at-point "`" "'"))
-    (hel-set-region beg end)))
-
-(hel-define-command hel-mark-a-legacy-quoted ()
-  :multiple-cursors t
-  :merge-selections t
-  (interactive)
-  (-when-let ((beg _ _ end) (hel-surround-4-bounds-at-point "`" "'"))
-    (hel-set-region beg end)))
-
-;;; Built-In packages
+;;; Built-in packages
 ;;;; Button
 
 (hel-advice-add 'forward-button  :before #'hel-deactivate-mark-a)
 (hel-advice-add 'backward-button :before #'hel-deactivate-mark-a)
+
+;;;; Backtrace and Debug
+
+(with-eval-after-load 'backtrace
+  (hel-keymap-set backtrace-mode-map :state 'emacs
+    "j"   'backtrace-forward-frame   ;; "n"
+    "k"   'backtrace-backward-frame) ;; "p"
+  ;; <local leader>
+  (hel-keymap-set backtrace-mode-map
+    ", v" 'backtrace-toggle-locals
+    ", #" 'backtrace-toggle-print-circle
+    ", :" 'backtrace-toggle-print-gensym
+    ", +" 'backtrace-multi-line
+    ", -" 'backtrace-single-line
+    ", ." 'backtrace-expand-ellipses))
+
+(with-eval-after-load 'debug
+  ;; `debugger-mode-map' is inherited from `backtrace-mode-map'
+  (hel-keymap-set debugger-mode-map
+    "J"   'debugger-jump
+    ;; <local leader>
+    ", b" 'debugger-frame
+    ", c" 'debugger-continue
+    ", j" 'debugger-jump
+    ", r" 'debugger-return-value
+    ", u" 'debugger-frame-clear
+    ", d" 'debugger-step-through
+    ", l" 'debugger-list-functions
+    ", e" 'debugger-eval-expression
+    ", R" 'debugger-record-expression))
 
 ;;;; Edebug
 
 (with-eval-after-load 'edebug
   (add-hook 'edebug-mode-hook #'hel-update-active-keymaps)
   (hel-keymap-set edebug-mode-map
-    "SPC"   nil ; unding `edebug-step-mode'
-    "h"     nil ; unding `edebug-goto-here'
-    "s"     #'edebug-step-mode
-    "H"     #'edebug-goto-here
-    "C-c h" #'edebug-goto-here)) ; <leader> h
+    "SPC"    nil ; unding `edebug-step-mode'
+    "h"      nil ; unding `edebug-goto-here'
+    "s"     'edebug-step-mode
+    "H"     'edebug-goto-here
+    "C-c h" 'edebug-goto-here) ; <leader> h
+  (hel-keymap-set edebug-mode-map :state 'normal
+    "<escape>" #'hel-normal-state-escape))
 
 ;;;; Eldoc
 
@@ -212,6 +224,8 @@ in the command loop, and the fake cursors can pick up on those instead."
                      'hel-forward-WORD-end     ; E
                      'hel-first-non-blank      ; gh
                      'hel-end-of-line-command  ; gl
+                     'hel-beginning-of-buffer  ; gg
+                     'hel-end-of-buffer        ; G
                      'hel-search-forward       ; /
                      'hel-search-backward      ; ?
                      'hel-search-next          ; n
@@ -221,16 +235,194 @@ in the command loop, and the fake cursors can pick up on those instead."
                      'hel-till-char-forward    ; t
                      'hel-till-char-backward)) ; T
 
+;;;; Elisp (emacs-lisp-mode)
+
+;; Fontification for Hel macros.
+(font-lock-add-keywords
+ 'emacs-lisp-mode (eval-when-compile
+                    `((,(concat "^\\s-*("
+                                (regexp-opt '("hel-define-command") t)
+                                "\\s-+\\(" (rx lisp-mode-symbol) "\\)")
+                       (1 'font-lock-keyword-face)
+                       (2 'font-lock-function-name-face nil t))
+                      (,(concat "^\\s-*("
+                                (regexp-opt '("hel-defvar-local") t)
+                                "\\s-+\\(" (rx lisp-mode-symbol) "\\)")
+                       (1 'font-lock-keyword-face)
+                       (2 'font-lock-variable-name-face nil t)))))
+
+;; `emacs-lisp-mode' is inherited from `lisp-data-mode'.
+(add-hook 'lisp-data-mode-hook 'hel--emacs-lisp-mode-h)
+
+(defun hel--emacs-lisp-mode-h ()
+  ;; Add legacy quotes marks to Hel surround functionality.
+  (let ((spec '(:insert ("`" . "'") :remove ("`" . "'"))))
+    (setf (alist-get ?` hel-surround-alist) spec)
+    (setf (alist-get ?' hel-surround-alist) spec))
+  ;;
+  ;; Teach `imenu' about Hel macros.
+  (dolist (i (eval-when-compile
+               `(("Variables"
+                  ,(concat "^\\s-*("
+                           (regexp-opt '("hel-defvar-local") t)
+                           "\\s-+\\(" (rx lisp-mode-symbol) "\\)")
+                  2)
+                 (nil ;; top level
+                  ,(concat "^\\s-*("
+                           (regexp-opt '("hel-define-command") t)
+                           "\\s-+'?\\(" (rx lisp-mode-symbol) "\\)")
+                  2))))
+    (cl-pushnew i imenu-generic-expression :test #'equal)))
+
+(dolist (keymap (list emacs-lisp-mode-map
+                      lisp-data-mode-map))
+  (hel-keymap-set keymap :state 'normal
+    "m `"   #'hel-mark-inner-legacy-quoted
+    "m '"   #'hel-mark-inner-legacy-quoted
+    "m i `" #'hel-mark-inner-legacy-quoted
+    "m i '" #'hel-mark-inner-legacy-quoted
+    "m a `" #'hel-mark-a-legacy-quoted
+    "m a '" #'hel-mark-a-legacy-quoted))
+
+(hel-keymap-set emacs-lisp-compilation-mode-map
+  "g"   nil
+  ", r" #'emacs-lisp-compilation-recompile)
+
+(hel-define-command hel-mark-inner-legacy-quoted ()
+  :multiple-cursors t
+  :merge-selections t
+  (interactive)
+  (-when-let ((_ beg end _) (hel-surround-4-bounds-at-point "`" "'"))
+    (hel-set-region beg end)))
+
+(hel-define-command hel-mark-a-legacy-quoted ()
+  :multiple-cursors t
+  :merge-selections t
+  (interactive)
+  (-when-let ((beg _ _ end) (hel-surround-4-bounds-at-point "`" "'"))
+    (hel-set-region beg end)))
+
 ;;;; Help
 
 (with-eval-after-load 'help-mode
-  (hel-set-initial-state 'help-mode 'normal)
-  (hel-inhibit-insert-state help-mode-map))
+  (hel-set-initial-state 'help-mode 'normal))
 
 (with-eval-after-load 'helpful
   (hel-set-initial-state 'helpful-mode 'normal)
-  (hel-inhibit-insert-state helpful-mode-map)
-  (put 'helpful-at-point 'multiple-cursors 'false))
+  (hel-set-single-cursor-command 'helpful-at-point)
+  ;; `helpful-mode' is derived from `special-mode', in which ESC is bound
+  ;; to switching Hel to Emacs state. We don't need Emacs state in
+  ;; `helpful-mode', so override it.
+  (hel-keymap-set helpful-mode-map :state 'normal
+    "<escape>" #'hel-normal-state-escape))
+
+;;;; Calendar
+
+(with-eval-after-load 'calendar
+  (hel-keymap-set calendar-mode-map :state 'emacs
+    ;; motions
+    "h"   'calendar-backward-day
+    "j"   'calendar-forward-week
+    "k"   'calendar-backward-week
+    "l"   'calendar-forward-day
+    "g h" 'calendar-beginning-of-week
+    "g l" 'calendar-end-of-week
+    "("   'calendar-beginning-of-month
+    ")"   'calendar-end-of-month
+    "{"   'calendar-backward-month
+    "}"   'calendar-forward-month
+    "g g" 'calendar-beginning-of-year
+    "G"   'calendar-end-of-year
+    "[ [" 'calendar-backward-year
+    "] ]" 'calendar-forward-year
+    ;; scrolling
+    "C-d" 'calendar-scroll-left
+    "C-u" 'calendar-scroll-right
+    "C-f" 'calendar-scroll-left-three-months
+    "C-b" 'calendar-scroll-right-three-months)
+  (hel-keymap-set calendar-mode-map
+    ;; holidays
+    "v"   'calendar-set-mark
+    "u"   'calendar-unmark
+    "="   'calendar-count-days-region
+    "g H" 'calendar-hebrew-goto-date  ; "gh"
+    "r"   'calendar-cursor-holidays)) ; "h"
+
+;;;; Comint
+
+(with-eval-after-load 'comint
+  (hel-keymap-set comint-mode-map
+    "<remap> <hel-insert>"      'hel-comint-insert      ; "i"
+    "<remap> <hel-append>"      'hel-comint-append      ; "a"
+    "<remap> <hel-insert-line>" 'hel-comint-insert-line ; "I"
+    "<remap> <hel-append-line>" 'hel-comint-append-line ; "A"
+    "<remap> <hel-change>"      'hel-comint-change))    ; "c"
+
+(declare-function comint-after-pmark-p "comint")
+
+(defun hel-comint--goto-process-mark ()
+  "Move point to the beginning of writable input start."
+  (-> (current-buffer)
+      (get-buffer-process)
+      (process-mark)
+      (goto-char)))
+
+;; i
+(hel-define-command hel-comint-insert ()
+  "Switch to Insert state, jumping to prompt if cursor is in read-only area."
+  :multiple-cursors nil
+  (interactive)
+  (unless (comint-after-pmark-p)
+    (hel-disable-multiple-cursors-mode)
+    (deactivate-mark)
+    (hel-comint--goto-process-mark))
+  (hel-insert))
+
+;; a
+(hel-define-command hel-comint-append ()
+  "Switch to Insert state after selection, jumping to prompt if in read-only."
+  :multiple-cursors nil
+  (interactive)
+  (unless (comint-after-pmark-p)
+    (hel-disable-multiple-cursors-mode)
+    (deactivate-mark)
+    (hel-comint--goto-process-mark))
+  (hel-append))
+
+;; I
+(hel-define-command hel-comint-insert-line ()
+  "Go to beginning of writable input and switch to Insert state."
+  :multiple-cursors nil
+  (interactive)
+  (unless (comint-after-pmark-p)
+    (hel-disable-multiple-cursors-mode)
+    (deactivate-mark)
+    (hel-comint--goto-process-mark))
+  (hel-insert-line))
+
+;; A
+(hel-define-command hel-comint-append-line ()
+  "Go to end of input line and switch to Insert state."
+  :multiple-cursors nil
+  (interactive)
+  (unless (comint-after-pmark-p)
+    (hel-disable-multiple-cursors-mode)
+    (deactivate-mark)
+    (hel-comint--goto-process-mark))
+  (hel-append-line))
+
+;; c
+(hel-define-command hel-comint-change ()
+  "Delete selection and switch to Insert state.
+If cursor is in read-only area, jump to prompt instead of deleting."
+  :multiple-cursors nil
+  (interactive)
+  (if (comint-after-pmark-p)
+      (hel-change)
+    (hel-disable-multiple-cursors-mode)
+    (deactivate-mark)
+    (hel-comint--goto-process-mark)
+    (hel-insert-state 1)))
 
 ;;;; Compilation
 
@@ -238,39 +430,58 @@ in the command loop, and the fake cursors can pick up on those instead."
 (hel-advice-add 'previous-error :around #'hel-jump-command-a)
 
 (with-eval-after-load 'compile
-  (dolist (keymap (list compilation-minor-mode-map compilation-mode-map))
+  (dolist (keymap (list compilation-minor-mode-map
+                        compilation-mode-map))
     (hel-keymap-set keymap
-      "o"   #'compilation-display-error
+      "o"    'compilation-display-error
 
-      "g"   nil ; unbind `recompile'
-      "g o" #'compile-goto-error
-      "g r" #'recompile ; revert
+      "g"     nil ; unbind `recompile'
+      "g o"  'compile-goto-error
+      "g r"  'recompile ; revert
 
-      "n"   #'next-error-no-select
-      "N"   #'previous-error-no-select
-      "C-j" #'next-error-no-select
-      "C-k" #'previous-error-no-select
+      "n"    'next-error-no-select
+      "N"    'previous-error-no-select
+      "C-j"  'next-error-no-select
+      "C-k"  'previous-error-no-select
 
-      "}"   #'compilation-next-file
-      "{"   #'compilation-previous-file
-      "] p" #'compilation-next-file
-      "[ p" #'compilation-previous-file
-      "z j" #'compilation-next-file
-      "z k" #'compilation-previous-file))
+      "}"    'compilation-next-file
+      "{"    'compilation-previous-file
+      "] p"  'compilation-next-file
+      "[ p"  'compilation-previous-file
+      "z j"  'compilation-next-file
+      "z k"  'compilation-previous-file))
 
   (hel-keymap-set compilation-mode-map
-    "g f" #'next-error-follow-minor-mode
-    "Z Q" #'kill-compilation)
+    "g f" 'next-error-follow-minor-mode
+    "Z Q" 'kill-compilation)
 
   (hel-advice-add 'compile-goto-error :around #'hel-jump-command-a))
+
+;;;; diff-mode
+
+(with-eval-after-load 'diff-mode
+  (hel-keymap-set diff-mode-shared-map
+    "k"    nil ; unbind `diff-hunk-kill'
+    "K"    nil ; unbind `diff-file-kill'
+    "d"   'diff-hunk-kill
+    "D"   'diff-file-kill
+    "u"   'diff-undo)
+  ;;
+  (hel-keymap-set diff-mode-map
+    "C-j" 'diff-hunk-next
+    "C-k" 'diff-hunk-prev
+    "g j" 'diff-hunk-next
+    "g k" 'diff-hunk-prev
+    "[ [" 'diff-file-prev
+    "] ]" 'diff-file-next))
 
 ;;;; grep-mode
 
 (with-eval-after-load 'grep
   ;; `grep-mode-map' is inherited from `compilation-minor-mode-map'
   (hel-keymap-set grep-mode-map
-    "i"   #'wgrep-change-to-wgrep-mode
-    "g f" #'next-error-follow-minor-mode))
+    "i"   'wgrep-change-to-wgrep-mode
+    "g f" 'next-error-follow-minor-mode))
 
 ;;;;; wgrep
 
@@ -286,7 +497,7 @@ in the command loop, and the fake cursors can pick up on those instead."
     "<remap> <save-buffer>" 'wgrep-finish-edit)
 
   (hel-advice-add 'wgrep-to-original-mode :before #'hel-deactivate-mark-a)
-  (hel-advice-add 'wgrep-to-original-mode :before #'hel-delete-all-fake-cursors)
+  (hel-advice-add 'wgrep-to-original-mode :before #'hel-disable-multiple-cursors-mode)
   (hel-advice-add 'wgrep-to-original-mode :after  #'hel-switch-to-initial-state))
 
 ;;;; occur-mode
@@ -320,35 +531,60 @@ in the command loop, and the fake cursors can pick up on those instead."
   (hel-advice-add 'wdired-change-to-dired-mode  :after #'hel-switch-to-initial-state)
 
   (hel-keymap-set wdired-mode-map :state 'normal
+    "<escape>" 'helheim-wdired-exit
+    "Z Z"      'wdired-finish-edit
+    "Z Q"      'wdired-abort-changes
+    ;;
     "j"        'wdired-next-line
     "k"        'wdired-previous-line
     "<up>"     'wdired-next-line
     "<down>"   'wdired-previous-line
-
-    "Z Z"      'wdired-finish-edit
-    "Z Q"      'wdired-abort-changes
-    "<escape>" 'wdired-exit
-
     ;; Commands bound to these keys have no sense for wdired.
     "o" 'undefined
     "O" 'undefined
     "J" 'undefined)
 
   (hel-keymap-set wdired-mode-map
-    "<remap> <save-buffer>" #'wdired-finish-edit)
+    "<remap> <save-buffer>" 'wdired-finish-edit
+    "C-g" 'wdired-abort-changes)
 
-  (put 'wdired--self-insert  'multiple-cursors t)
-  (put 'wdired-next-line     'multiple-cursors t)
-  (put 'wdired-previous-line 'multiple-cursors t)
-  (put 'wdired-finish-edit   'multiple-cursors 'false)
-  (put 'wdired-abort-changes 'multiple-cursors 'false)
-  (put 'wdired-exit          'multiple-cursors 'false)
+  (hel-set-multiple-cursors-command 'wdired--self-insert)
+  (hel-set-multiple-cursors-command 'wdired-next-line)
+  (hel-set-multiple-cursors-command 'wdired-previous-line)
+  (hel-set-single-cursor-command 'wdired-finish-edit)
+  (hel-set-single-cursor-command 'wdired-abort-changes)
+  (hel-set-single-cursor-command 'wdired-exit)
 
   (hel-advice-add 'wdired-change-to-dired-mode :before #'hel-deactivate-mark-a)
-  (hel-advice-add 'wdired-change-to-dired-mode :before #'hel-delete-all-fake-cursors)
+  (hel-advice-add 'wdired-change-to-dired-mode :before #'hel-disable-multiple-cursors-mode)
 
   (hel-advice-add 'wdired-next-line     :before #'hel-deactivate-mark-a)
   (hel-advice-add 'wdired-previous-line :before #'hel-deactivate-mark-a))
+
+(declare-function wdired-exit "wdired")
+
+(hel-define-command helheim-wdired-exit ()
+  :multiple-cursors t
+  (interactive)
+  (cond (hel--extend-selection
+         (hel-extend-selection -1))
+        ((use-region-p)
+         (deactivate-mark))
+        (t
+         (wdired-exit))))
+
+;;;; image-mode
+
+(with-eval-after-load 'image-mode
+  (hel-keymap-set image-mode-map :state 'emacs
+    "C-y" 'image-previous-line
+    "C-e" 'image-next-line
+    "C-b" 'image-scroll-right
+    "C-f" 'image-scroll-left
+    "C-d" 'image-scroll-up
+    "C-u" 'image-scroll-down
+    "z h" 'image-scroll-right
+    "z l" 'image-scroll-left))
 
 ;;;; Messages buffer
 
@@ -356,33 +592,22 @@ in the command loop, and the fake cursors can pick up on those instead."
 
 ;;;; Minibuffer
 
-;; (hel-keymap-set minibuffer-mode-map :state 'normal
-;;   ;; "ESC" #'abort-minibuffers
-;;   "<escape>" #'abort-recursive-edit
-;;   ;; "<down>"   #'next-line-or-history-element
-;;   ;; "<up>"     #'previous-line-or-history-element
-;;   "C-j" #'next-line-or-history-element
-;;   "C-k" #'previous-line-or-history-element)
-;;
-;; ;; (hel-keymap-set minibuffer-local-map :state 'insert
-;; ;;   "C-j" #'next-line-or-history-element
-;; ;;   "C-k" #'previous-line-or-history-element)
-
 (hel-keymap-set minibuffer-mode-map :state 'normal
   ;; "ESC" #'abort-minibuffers
-  "<escape>" #'abort-recursive-edit)
+  "<escape>" #'abort-recursive-edit
+  "<down>"   #'next-line-or-history-element
+  "<up>"     #'previous-line-or-history-element
+  "j"        #'next-line-or-history-element
+  "k"        #'previous-line-or-history-element)
+
+(hel-keymap-set minibuffer-mode-map :state 'insert
+  "C-w" #'hel-delete-backward-word)
 
 (hel-keymap-set minibuffer-mode-map
-  "C-j" #'next-line-or-history-element
-  "C-k" #'previous-line-or-history-element)
-
-(hel-keymap-set read-expression-map :state 'normal
-  "<down>" #'next-line-or-history-element
-  "<up>"   #'previous-line-or-history-element)
-
-(hel-keymap-set read-expression-map
-  "C-j" #'next-line-or-history-element
-  "C-k" #'previous-line-or-history-element)
+  "C-j" #'next-history-element
+  "C-k" #'previous-history-element
+  "M-j" #'next-history-element
+  "M-k" #'previous-history-element)
 
 ;; `C-j' in `read--expression-map' is bound to `read--expression-try-read'
 ;; which is also bound to `RET'. Remove it, to make the binding from the
@@ -417,79 +642,164 @@ in the command loop, and the fake cursors can pick up on those instead."
   "]" #'next-buffer
   "[" #'previous-buffer)
 
+;;;; page
+
+(hel-advice-add 'forward-page  :around #'hel-jump-command-a)
+(hel-advice-add 'backward-page :around #'hel-jump-command-a)
+
 ;;;; shortdoc
 
 (with-eval-after-load 'shortdoc
-  (keymap-set shortdoc-mode-map "y" #'shortdoc-copy-function-as-kill))
+  (keymap-set shortdoc-mode-map "y" 'shortdoc-copy-function-as-kill))
 
 ;;;; special-mode
 
-(hel-keymap-set special-mode-map ;; :state 'motion
+(hel-keymap-set special-mode-map
   "h"   #'left-char
   "j"   #'next-line
   "k"   #'previous-line
   "l"   #'right-char
-
-  ;; Switch to Normal state. This allows you to select and copy arbitrary text
-  ;; in special modes, which is very handy.
-  "i"   #'hel-normal-state
-  ;; Use "zx" or "C-x C-s" to switch back to motion state.
-  ;; Saving special buffer has little sense, so we can reuse it.
-  "<remap> <save-buffer>" #'hel-motion-state
-
-  "g"   nil ; unbind `revert-buffer'
+  ;;
+  "g"   nil ; unbind `revert-buffer', we have it on "C-w r"
   "g a" #'describe-char
-  "g r" #'revert-buffer       ; also "C-w r"
-  "g g" #'beginning-of-buffer ; also "<"
-  "G"   #'end-of-buffer)      ; also ">"
+  "g r" #'revert-buffer          ; also "C-w r"
+  "g h" #'move-beginning-of-line ; native "C-a"
+  "g l" #'move-end-of-line       ; native "C-e"
+  "g g" #'beginning-of-buffer    ; native "<"
+  "G"   #'end-of-buffer          ; native ">"
+  ;;
+  ;; Switch to Normal state. This allows you to select and copy arbitrary text
+  ;; in special modes.
+  ;;   Bind it in base keymap instead of Emacs state keymap, to not override
+  ;; the "i" key for major modes that inherit from special-mode.
+  "i"   #'hel-normal-state)
+
+(hel-keymap-set special-mode-map :state 'normal
+  "<escape>" #'hel-emacs-state
+  ;; Use "zx" or "C-x C-s" to switch back to Emacs state.
+  ;; Saving special buffer has little sense, so we can use it.
+  "<remap> <save-buffer>" #'hel-emacs-state)
 
 ;;;; prog-mode
 
 (hel-keymap-set prog-mode-map :state 'normal
-  "g q" #'prog-fill-reindent-defun)
+  ")"   #'hel-mark-function-forward
+  "("   #'hel-mark-function-backward)
+
+(when (<= 30 emacs-major-version)
+  (hel-keymap-set prog-mode-map :state 'normal
+    "g q" #'prog-fill-reindent-defun))
+
+(hel-keymap-set prog-mode-map :state 'insert
+  "C-w" #'hel-delete-backward-word)
+
+;;;; text-mode
+
+(hel-keymap-set text-mode-map :state 'normal
+  ")"   #'hel-mark-sentence-forward
+  "("   #'hel-mark-sentence-backward)
+
+(hel-keymap-set text-mode-map :state 'insert
+  "C-w" #'hel-delete-backward-word)
+
+;;;; conf-mode
+
+(with-eval-after-load 'conf-mode
+  (hel-keymap-set conf-mode-map :state 'insert
+    "C-w" #'hel-delete-backward-word))
 
 ;;;; winner-mode & tab-bar-history-mode
 
-(with-eval-after-load 'winner
-  (hel-keymap-set winner-mode-map :state '(normal motion)
-    "C-w u" 'winner-undo
-    "C-w U" 'winner-redo))
+(add-hook 'winner-mode-hook
+          (defun hel-setup-winner-mode-keys ()
+            (when winner-mode
+              (hel-keymap-set hel-window-map
+                "u" 'winner-undo
+                "U" 'winner-redo))))
 
-(with-eval-after-load 'tab-bar
-  (hel-keymap-set tab-bar-history-mode-map :state '(normal motion)
-    "C-w u" 'tab-bar-history-back
-    "C-w U" 'tab-bar-history-forward))
-
-;; (add-hook 'winner-mode-hook
-;;           (defun hel-setup-winner-mode-keys ()
-;;             (if winner-mode
-;;                 (hel-keymap-set hel-window-map
-;;                   "u" #'winner-undo
-;;                   "U" #'winner-redo)
-;;               (hel-keymap-set hel-window-map
-;;                 "u" nil
-;;                 "U" nil))))
-;;
-;; (add-hook 'tab-bar-history-mode-hook
-;;           (defun hel-setup-tab-bar-history-mode-keys ()
-;;             (if tab-bar-history-mode
-;;                 (hel-keymap-set hel-window-map
-;;                   "u"   #'tab-bar-history-back
-;;                   "U"   #'tab-bar-history-forward)
-;;               (hel-keymap-set hel-window-map
-;;                 "u" nil
-;;                 "U" nil))))
+(add-hook 'tab-bar-history-mode-hook
+          (defun hel-setup-tab-bar-history-mode-keys ()
+            (when tab-bar-history-mode
+              (hel-keymap-set hel-window-map
+                "u" 'tab-bar-history-back
+                "U" 'tab-bar-history-forward))))
 
 ;;;; VC
 
-(with-eval-after-load 'bug-reference
-  (hel-keymap-set bug-reference-map :state 'normal
-    "RET" #'bug-reference-push-button))
-
 (with-eval-after-load 'log-view
   (hel-keymap-set log-view-mode-map
-    "j" #'log-view-msg-next
-    "k" #'log-view-msg-prev))
+    "j" 'log-view-msg-next
+    "k" 'log-view-msg-prev))
+
+;;;; which-key
+
+(with-eval-after-load 'which-key
+  ;; Do not display "C-w C-" and "C-c w C-" keys duplicates in which-key popup.
+  (add-to-list 'which-key-replacement-alist
+               '(("^\\(?:C-c w\\|C-w\\) C-[a-z]" . nil) . ignore))
+  ;; Do not display keys bound to following commands in which-key popup.
+  (let ((regexp (eval-when-compile
+                  (regexp-opt (-map #'symbol-name
+                                    '(hel-m-digit-argument
+                                      hel-mi-digit-argument
+                                      hel-ma-digit-argument
+                                      hel-m-negative-argument
+                                      hel-mi-negative-argument
+                                      hel-ma-negative-argument))))))
+    (add-to-list 'which-key-replacement-alist
+                 `((nil . ,regexp) . ignore)))
+  (let ((regexp (eval-when-compile
+                  (regexp-opt (-map #'symbol-name
+                                    '(hel-mark-a-surround
+                                      hel-mark-a-paren
+                                      hel-mark-a-bracket
+                                      hel-mark-a-curly
+                                      hel-mark-an-angle
+                                      hel-mark-a-double-quoted
+                                      hel-mark-a-single-quoted
+                                      hel-mark-a-back-quoted
+                                      hel-mark-inner-surround
+                                      hel-mark-inner-paren
+                                      hel-mark-inner-bracket
+                                      hel-mark-inner-curly
+                                      hel-mark-inner-angle
+                                      hel-mark-inner-double-quoted
+                                      hel-mark-inner-single-quoted
+                                      hel-mark-inner-back-quoted))))))
+    (add-to-list 'which-key-replacement-alist
+                 `((nil . ,regexp) . ignore))))
+
+;;;; widget
+
+(defun hel-switch-to-normal-state-in-field-widget ()
+  "This function intended to be called from mode hook of major modes that use
+field widgets (like `Custom-mode' or `notmuch-hello-mode')."
+  (add-hook 'post-command-hook #'hel--widget-field-h nil t))
+
+(defun hel--widget-field-h ()
+  (cond ((widget-field-at (point))
+         (when (eq hel-state 'emacs)
+           (hel-normal-state)
+           (hel-update-active-keymaps)))
+        ((not (eq hel-state 'emacs))
+         (when hel-multiple-cursors-mode (hel-multiple-cursors-mode -1))
+         (hel-emacs-state))))
+
+(with-eval-after-load 'wid-edit
+  (hel-keymap-set widget-field-keymap :state 'normal
+    "g h" 'hel-beginning-of-line-command
+    "g l" 'hel-widget-end-of-line)
+  ;;
+  (widget-put (get 'editable-field 'widget-type) :keymap widget-field-keymap))
+
+;; gl
+(hel-define-command hel-widget-end-of-line ()
+  "Move point to end of field or end of line, whichever is first."
+  :multiple-cursors t
+  :merge-selections t
+  (interactive)
+  (hel-set-region (if hel--extend-selection (mark) (point))
+                  (progn (widget-end-of-line) (point))))
 
 ;;;; Xref
 
@@ -529,7 +839,7 @@ in the command loop, and the fake cursors can pick up on those instead."
 (with-eval-after-load 'consult
   (hel-cache-input consult--read)
 
-  (put 'consult-yank-pop 'multiple-cursors t) ; Execute for all cursors.
+  (hel-set-multiple-cursors-command 'consult-yank-pop)
 
   (dolist (cmd '(consult-line
                  consult-mark
@@ -540,6 +850,58 @@ in the command loop, and the fake cursors can pick up on those instead."
                  consult-git-grep
                  consult-ripgrep))
     (hel-advice-add cmd :before #'hel-deactivate-mark-a)))
+
+;;;; diff-hl
+
+(add-hook 'diff-hl-show-hunk-inline-transient-mode-hook
+          (defun hel-switch-to-emacs-state-while-diff-hl-show-hunk-h ()
+            "Switch to Emacs state while VC diff hunk is shown."
+            (if diff-hl-show-hunk-inline-transient-mode
+                (hel-emacs-state)
+              (hel-normal-state))))
+
+(with-eval-after-load 'diff-hl-show-hunk-inline
+  (hel-keymap-set diff-hl-show-hunk-inline-transient-mode-map
+    "<remap> <self-insert-command>" 'ignore))
+
+;;;; embark
+
+(declare-function embark--targets "embark")
+(declare-function embark--act "embark")
+(declare-function embark--restart "embark")
+(declare-function embark--confirm "embark")
+
+(defvar hel--embark-action nil
+  "Embark action chosen for the real cursor.")
+
+(defun hel-embark-act-a (orig-fun &rest args)
+  "Around advice for `embark-act' and `embark-dwim' fanning them out to all cursors.
+For the real cursor, forget any previously recorded action and run
+ORIG-FUN normally (which records the chosen action, see the advice on
+`embark--act').  When Hel replays the command for a fake cursor, skip
+the prompter: recompute the target at that cursor's point and run the
+recorded action on it, suppressing confirmations and restarts."
+  (if hel-executing-command-for-fake-cursor
+      (when hel--embark-action
+        (when-let* ((targets (embark--targets)))
+          (cl-letf (((symbol-function 'embark--restart) #'ignore)
+                    ((symbol-function 'embark--confirm) #'ignore))
+            (embark--act hel--embark-action (car targets)))))
+    ;; else
+    (setq hel--embark-action nil)
+    (apply orig-fun args)))
+
+(with-eval-after-load 'embark
+  (hel-define-advice embark--act (:before (action &rest _))
+    "Remember the Embark ACTION chosen for the real cursor."
+    (unless hel-executing-command-for-fake-cursor
+      (setq hel--embark-action action)))
+
+  (hel-set-multiple-cursors-command 'embark-act)
+  (hel-set-multiple-cursors-command 'embark-dwim)
+
+  (hel-advice-add 'embark-act  :around #'hel-embark-act-a)
+  (hel-advice-add 'embark-dwim :around #'hel-embark-act-a))
 
 ;;; .
 (provide 'hel-integration)

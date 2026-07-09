@@ -1,0 +1,61 @@
+* hel-org
+
+A [[https://github.com/anuvyklack/hel][Hel]] extension for [[https://orgmode.org/][Org-mode]].
+
+** Install
+
+#+begin_src emacs-lisp
+(use-package hel-org
+  :vc (:url "https://github.com/anuvyklack/hel-org.git" :rev "main")
+  :after org)
+#+end_src
+
+** Integration with Org-mode
+
+- Hel native commands are org-aware (=d=, =p=, =<=, =>=, ~=~, etc).
+
+- Hel's select (=mi=, =ma=) and surround (=ms=, =md=, =mr=) commands work with all
+  Org emphasis markers (=*=, =/=, =_=, =+=, ~=~, ~=~).
+
+- When ~hel-multiple-cursors-mode~ is active, ~org-hide-emphasis-markers~ is
+  temporarily set to =nil= so fake cursors can see raw markup delimiters.
+
+** Keybindings
+
+- =M-=​, =S-M-=​, =C-S-= + =h=, =j=, =k=, =l= keys work as arrows with the same modifiers
+  except for =J= and =K=, because =J= is occupied by ~hel-join-line~ in Hel.
+
+- =g h= ::
+  First non-blank. In headlines jumps to text start (after stars and =TODO=
+  keyword); pressing again goes to line start. Same smart behavior in list
+  items.
+
+- =[ RET= / =] RET= ::
+  Insert heading, list item, or table row *above* / *below* current one.
+
+*** Structural editing
+
+The same as tree-sitter AST navigation commands but for Org-mode:
+
+| Key                    | Description                          |
+|------------------------+--------------------------------------|
+| =C-h= / =C-l= or =M-o= / =M-i= | Select *eclosing* / *nested* AST node.   |
+| =C-j= / =C-k= or =M-n= / =M-p= | Select the *next* / *previous* AST node. |
+
+*** ~org-edit-special~
+
+Standard convention borrowed from Evil (which follows Vim) in Org-mode
+source-block, capture, and table-formula editing buffers:
+
+| =Z Z= | save and exit (native =C-c C-c=)          |
+| =Z Q= | Abort, discard changes (native =C-c C-k=) |
+
+*** Org calendar
+
+| Key                     | Description                      |
+|-------------------------+----------------------------------|
+| =C-= + =h=, =j=, =k=, =l=         | move over days and weeks         |
+| =M-= or =C-S-= + =h=, =j=, =k=, =l= | move over months and years       |
+| =C-d= / =C-u=               | scroll calendar for one month    |
+| =C-f= / =C-b=               | scroll calendar for three months |
+

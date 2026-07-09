@@ -7,10 +7,6 @@
 ;; Place cursor before character and press "ga" to see information about it.
 ;; Press "<F1> k ga" to find out which command is bound to "ga".
 
-(setq use-default-font-for-symbols t)
-(let ((font (font-spec :family "Cascadia Code" :size 13.0 :weight 'normal)))
-  (set-face-font 'default font)
-  (set-face-font 'fixed-pitch font))
 
 (require 'cl-macs)
 (cl-defun helheim-set-fontset-font (font charsets &key (fontset t) add)
@@ -32,33 +28,45 @@
 ;; † ‡ • ‣ ․ ‥ … ‧ ‰ ‱ ′ ″ ‴ ‵ ‶ ‷ ‸ ‹ ›
 ;; ※ ‼ ‽ ‾ ‿ ⁀ ⁁ ⁂ ⁃ ⁄ ⁅ ⁆ ⁇ ⁈ ⁉ ⁊ ⁋ ⁌ ⁍
 ;; ⁎ ⁏ ⁐ ⁑ ⁒ ⁓ ⁔ ⁕ ⁖ ⁗ ⁘ ⁙ ⁚ ⁛ ⁜ ⁝ ⁞
-(helheim-set-fontset-font (face-font 'default) '((#x2010 . #x205e)))
+(defun helheim--setup-fonts (&optional _frame)
+  "Configure fonts after a graphical frame exists."
+  (when (display-graphic-p)
+    (setq use-default-font-for-symbols t)
+    (let ((font (font-spec :family "Cascadia Code" :size 13.0 :weight 'normal)))
+      (set-face-font 'default font)
+      (set-face-font 'fixed-pitch font))
+    (helheim-set-fontset-font (face-font 'default) '((#x2010 . #x205e)))
+    (helheim-set-fontset-font "Symbols Nerd Font Mono"
+      '((#xe5fa . #xe6b7) ;; Seti-UI + Custom  
+        (#xe700 . #xe8ef) ;; Devicons  
+        (#xed00 . #xf2ff) ;; Font Awesome  
+        (#xe200 . #xe2a9) ;; Font Awesome Extension  
+        (#xe300 . #xe3e3) ;; Weather  
+        (#xf400 . #xf533) #x2665 #x26A1 ;; Octicons   ♥ ⚡
+        (#x23fb . #x23fe) #x2b58 ;; IEC Power Symbols ⏻ ⏾ ⭘
+        (#xf300 . #xf381) ;; Font Logos   
+        (#xe000 . #xe00a) ;; Pomicons  
+        (#xea60 . #xec1e) ;; Codicons  
+        (#x276c . #x2771) ;; Heavy Angle Brackets ❬ ❱
+        (#xee00 . #xee0b) ;; Progress  
+        (#xf0001 . #xf1af0))) ;; Material Design Icons 󰀁 󱫰
+    ;; In the modeline, we’re not restricted by a rigid grid, and non-monospace
+    ;; Powerline symbols look better.
+    (helheim-set-fontset-font "Symbols Nerd Font"
+      `(;; Powerline Symbols
+        (#xe0a0 . #xe0a2) ;;  
+        (#xe0b0 . #xe0b3) ;;  
+        ;; Powerline Extra Symbols
+        (#xe0b4 . #xe0c8) ;;  
+        (#xe0cc . #xe0d7) ;;  
+    #xe0a3 #xe0ca))))  ;; 
 
-(helheim-set-fontset-font "Symbols Nerd Font Mono"
-  '((#xe5fa . #xe6b7) ;; Seti-UI + Custom  
-    (#xe700 . #xe8ef) ;; Devicons  
-    (#xed00 . #xf2ff) ;; Font Awesome  
-    (#xe200 . #xe2a9) ;; Font Awesome Extension  
-    (#xe300 . #xe3e3) ;; Weather  
-    (#xf400 . #xf533) #x2665 #x26A1 ;; Octicons   ♥ ⚡
-    (#x23fb . #x23fe) #x2b58 ;; IEC Power Symbols ⏻ ⏾ ⭘
-    (#xf300 . #xf381) ;; Font Logos   
-    (#xe000 . #xe00a) ;; Pomicons  
-    (#xea60 . #xec1e) ;; Codicons  
-    (#x276c . #x2771) ;; Heavy Angle Brackets ❬ ❱
-    (#xee00 . #xee0b) ;; Progress  
-    (#xf0001 . #xf1af0))) ;; Material Design Icons 󰀁 󱫰
-
-;; In the modeline, we’re not restricted by a rigid grid, and non-monospace
-;; Powerline symbols look better.
-(helheim-set-fontset-font "Symbols Nerd Font"
-  `(;; Powerline Symbols
-    (#xe0a0 . #xe0a2) ;;  
-    (#xe0b0 . #xe0b3) ;;  
-    ;; Powerline Extra Symbols
-    (#xe0b4 . #xe0c8) ;;  
-    (#xe0cc . #xe0d7) ;;  
-    #xe0a3 #xe0ca))   ;;  
+(if (daemonp)
+    ;; Defer to idle timer so font setup runs after the frame is fully ready.
+    (add-hook 'after-make-frame-functions
+              (lambda (frame)
+                (run-with-idle-timer 0.1 nil #'helheim--setup-fonts frame)))
+  (helheim--setup-fonts))
 
 ;;; Helheim core
 
@@ -68,46 +76,61 @@
 ;;                            ("https" . "127.0.0.1:10809"))
 ;;       gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 
-(when (< emacs-major-version 31)
-  (load-file (expand-file-name "prepare-user-lisp.el" user-lisp-directory))
-  (prepare-user-lisp))
-
-;; Offline mode
-;; (require 'helheim-elpaca)
+;; Use site-lisp/ (offline) package manager — no elpaca/straight needed.
+(setq helheim-package-manager 'site-lisp)
 (require 'helheim-core)
-(require 'helheim-tree-sitter)
+
+;; Remove all *-ts-mode remaps when tree-sitter is unavailable.
+;; Both Emacs built-ins and helheim-cpp.el set these unconditionally.
+(add-hook 'after-init-hook
+          (lambda ()
+            (unless (and (fboundp 'treesit-available-p) (treesit-available-p))
+              (setq major-mode-remap-alist
+                    (cl-remove-if
+                     (lambda (x)
+                       (string-suffix-p "-ts-mode" (symbol-name (cdr x))))
+                     major-mode-remap-alist)))))
 
 ;;; Color theme
 
-(use-package helheim-modus-themes
-  :config
-  (load-theme 'modus-operandi t))
+(require 'helheim-modus-themes)
+(load-theme 'modus-operandi t)
 
-;; (setq modus-operandi-tinted-palette-overrides
-;;       '((cursor red-intense)))   
 ;; I can recommend `leuven' theme for org-mode work. It has so many nice little
 ;; touches to spruce up org-mode elements that some users switch to it from
 ;; their usual dark doom or modus themes when working on org-mode projects.
 ;;   You may try it with ": load-theme" then type "leuven".
-(use-package leuven-theme)
+(require 'leuven-theme)
 
-;;; Other modules
+;;; Essentials
 
-(require 'helheim-tab-bar)  ; Each tab represents a set of windows, as in Vim.
-(require 'helheim-xref)     ; Go to defenition framework
+(require 'helheim-minibuffer) ; Vertico + marginalia (command palette)
+(require 'helheim-completion) ; Corfu + orderless (code completion)
+(require 'helheim-keybindings)
+(require 'helheim-disable-isearch)
+
 (require 'helheim-ibuffer)  ; Buffers menu
 (require 'helheim-dired)    ; File-manager
-(require 'helheim-git)      ; Magit
+(require 'helheim-embark)   ; Context-aware action menus
+(require 'helheim-modeline) ; Status line (doom-modeline)
+(require 'helheim-outline)  ; See "Outline Mode" in Emacs manual
+(require 'helheim-tab-bar)  ; Each tab represents a set of windows, as in Vim
 
-(require 'helheim-outline-mode) ; See "Outline Mode" in Emacs manual.
+;;; Search
 
-;;; Search and completion
-
-(require 'helheim-corfu)    ; Code completion menus
-(require 'helheim-vertico)  ; Emacs version of command pallet
 (require 'helheim-consult)  ; A set of search commands with preview
 (require 'helheim-deadgrep) ; Interface to Ripgrep
-(require 'helheim-embark)   ; Context-aware action menus
+
+;;; IDE
+
+(require 'helheim-xref)     ; Go to definition framework
+(require 'helheim-eglot)    ; eglot + flymake (both built-in)
+
+;;; Version control
+
+(require 'helheim-magit)    ; Magit
+(require 'helheim-diff-hl)  ; Git gutter indicators
+(require 'helheim-ediff)    ; Ediff
 
 ;;; Org mode
 
@@ -127,17 +150,13 @@
 
 ;;; Major modes
 
+(require 'helheim-cpp)
 (require 'helheim-emacs-lisp)
+(require 'helheim-json)
 (require 'helheim-markdown)
+(require 'helheim-lua)
+(require 'helheim-sh)
 
-;;; Keybindings
-
-;; Wait for all packages to finish loading (especially hel package with its extensions)
-;; (elpaca-wait)
-
-(require 'hel-leader)
-(require 'helheim-keybindings)
-(require 'helheim-disable-isearch)
 
 ;;; Writing and spell checking
 
@@ -169,34 +188,21 @@
 
 ;;; Programming configuration
 
- 
-
 ;; Auto-pair brackets, quotes, etc.
-
 (electric-pair-mode 1)
 
- 
+;; Ensure eglot starts for C/C++ regardless of whether tree-sitter remaps the mode.
+(add-hook 'c-mode-common-hook #'eglot-ensure)
+(add-hook 'c-ts-mode-hook #'eglot-ensure)
+(add-hook 'c++-ts-mode-hook #'eglot-ensure)
+;; Start harper-ls for text/prose files.
+(add-hook 'text-mode-hook #'eglot-ensure)
 
-;; Indent by 4 spaces
+;; Restore SPC-d → dired-jump (C-c d is now the diagnostics prefix in new helheim).
+(keymap-set mode-specific-map "d" 'dired-jump)
 
-(setq-default c-basic-offset 4)
-
-;; Enable Eglot for both C modes (whichever you use)
-(use-package eglot
-  :init
-  (add-hook 'c-mode-common-hook #'eglot-ensure)
-  :bind (:map eglot-mode-map
-         ;; SPC l prefix (LSP)
-         ("C-c l r" . eglot-rename)
-         ("C-c l a" . eglot-code-actions)
-         ("C-c l f" . eglot-format-buffer)
-         ("C-c l d" . flymake-show-buffer-diagnostics)
-         ("C-c l D" . flymake-show-project-diagnostics)
-         ("C-c l i" . eglot-find-implementation)
-         ("C-c l t" . eglot-find-typeDefinition)
-         ("C-c l s" . eglot-shutdown)
-         ("C-c l R" . eglot-reconnect))
-  :config
+;; LSP server overrides (helheim-eglot provides the base eglot config)
+(with-eval-after-load 'eglot
   (add-to-list 'eglot-server-programs
                '(c-mode . ("clangd" "--header-insertion=never")))
   (add-to-list 'eglot-server-programs
