@@ -31,12 +31,13 @@ jobs:
 
       - name: Create archive
         run: |
-          tar -czf "${{ steps.info.outputs.archive }}" \
+          tar -czf "/tmp/${{ steps.info.outputs.archive }}" \
             --exclude='.git' \
             --exclude='*.elc' \
             --exclude='.user-lisp-autoloads.el' \
             --exclude='.github' \
             .
+          mv "/tmp/${{ steps.info.outputs.archive }}" "${{ steps.info.outputs.archive }}"
 
       - name: Generate release notes
         env:
