@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'          # main releases:    v1.0.0, v2025.07.09, etc.
+      - 'upstream/*'  # upstream syncs:   upstream/2025.07.09
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so we can read both branches
+
+      - name: Determine release info
+        id: info
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          # Archive name mirrors the tag (slashes → dashes for upstream/* tags)
+          SAFE_TAG="${TAG//\//-}"
+          ARCHIVE="helheim-custom-${SAFE_TAG}.tar.gz"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+          # Upstream helheim-emacs commit — recorded in .upstream-ref if present,
+          # otherwise read from the tip of the upstream branch.
+          if [ -f .upstream-ref ]; then
+            UPSTREAM_SHA=$(cat .upstream-ref)
+          else
+            UPSTREAM_SHA=$(git rev-parse origin/upstream 2>/dev/null || echo "unknown")
+          fi
+          echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+
+          # Is this an upstream-sync tag?
+          if [[ "$TAG" == upstream/* ]]; then
+            echo "is_upstream=true"  >> "$GITHUB_OUTPUT"
+            echo "prerelease=false"  >> "$GITHUB_OUTPUT"
+          else
+            echo "is_upstream=false" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false"  >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create archive
+        run: |
+          tar -czf "${{ steps.info.outputs.archive }}" \
+            --exclude='.git' \
+            --exclude='*.elc' \
+            --exclude='.user-lisp-autoloads.el' \
+            --exclude='.github' \
+            .
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG="${{ steps.info.outputs.tag }}"
+          UPSTREAM="${{ steps.info.outputs.upstream_sha }}"
+
+          if [ "${{ steps.info.outputs.is_upstream }}" = "true" ]; then
+            TITLE="Upstream sync: ${TAG#upstream/}"
+            BODY="Sync of upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs) at commit \`${UPSTREAM}\`.
+
+This release contains the vendored packages in \`site-lisp/\` updated to match
+the upstream snapshot, with the airgapped offline-mode patches applied."
+          else
+            BODY="Airgapped helheim-emacs configuration — release \`${TAG}\`.
+
+Based on upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs)
+at commit \`${UPSTREAM}\`.
+
+## Installation
+Extract the archive to your Emacs config directory and ensure \`site-lisp/\`
+is on the target machine."
+          fi
+
+          # Write to file to avoid shell quoting issues
+          echo "$BODY" > release_notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.info.outputs.tag }}
+          name: ${{ steps.info.outputs.tag }}
+          body_path: release_notes.md
+          prerelease: ${{ steps.info.outputs.prerelease }}
+          files: ${{ steps.info.outputs.archive }}
