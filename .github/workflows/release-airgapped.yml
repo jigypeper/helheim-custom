@@ -39,25 +39,11 @@ jobs:
             .
 
       - name: Generate release notes
+        env:
+          UPSTREAM: ${{ steps.info.outputs.upstream_sha }}
+          TAG: ${{ github.ref_name }}
         run: |
-          UPSTREAM="${{ steps.info.outputs.upstream_sha }}"
-          cat > release_notes.md << EOF
-          Air-gapped helheim-emacs configuration.
-
-          Based on upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs)
-          at commit \`${UPSTREAM}\`.
-
-          ## What is stripped vs the main build
-          - No obsidian/org-vault sync (no network assumed)
-          - No harper-ls prose grammar checker
-          - Built-in \`c-mode\` / \`c++-mode\` instead of tree-sitter variants
-          - \`clangd\` assumed available locally on the target machine
-
-          ## Installation
-          Extract to \`~/.emacs.d/\` (or your Emacs config dir) on the target machine.
-          Set \`org-directory\` in \`init.el\` to wherever your notes live.
-          All packages are vendored in \`site-lisp/\` — no internet required.
-          EOF
+          printf 'Air-gapped helheim-emacs — `%s`.\n\nBased on upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs) at commit `%s`.\n\n## Differences from main build\n- No org-vault/obsidian sync\n- No harper-ls\n- Built-in `c-mode`/`c++-mode` (no tree-sitter)\n- Plain `emacs` startup (no daemon/client)\n\n## Installation\nExtract to your Emacs config directory. Set `org-directory` in `init.el` to your notes path. All packages are vendored in `site-lisp/` — no internet required.\n' "$TAG" "$UPSTREAM" > release_notes.md
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
