@@ -1,0 +1,51 @@
+name: Release (air-gapped)
+
+on:
+  push:
+    tags:
+      - 'airgapped/v*'   # e.g. airgapped/v2025.07.09
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: airgapped
+
+      - name: Build info
+        id: info
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          SAFE_TAG="${TAG//\//-}"
+          ARCHIVE="helheim-airgapped-${SAFE_TAG#airgapped-}.tar.gz"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+          UPSTREAM=$(cat .upstream-ref 2>/dev/null || echo "unknown")
+          echo "upstream=${UPSTREAM}" >> "$GITHUB_OUTPUT"
+
+      - name: Create archive
+        run: |
+          tar -czf "${{ steps.info.outputs.archive }}" \
+            --exclude='.git' \
+            --exclude='*.elc' \
+            --exclude='.user-lisp-autoloads.el' \
+            --exclude='.github' \
+            .
+
+      - name: Generate release notes
+        env:
+          UPSTREAM: ${{ steps.info.outputs.upstream }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          printf 'Air-gapped helheim-emacs — `%s`.\n\nBased on upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs) at commit `%s`.\n\n## Differences from main build\n- No org-vault/obsidian sync\n- No harper-ls\n- Built-in `c-mode`/`c++-mode` (no tree-sitter)\n- Plain `emacs` startup (no daemon/client)\n\n## Installation\nExtract to your Emacs config directory. Set `org-directory` in `init.el`. All packages are vendored in `site-lisp/` — no internet required.\n' "$TAG" "$UPSTREAM" > release_notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Air-gapped ${{ github.ref_name }}"
+          body_path: release_notes.md
+          files: ${{ steps.info.outputs.archive }}
