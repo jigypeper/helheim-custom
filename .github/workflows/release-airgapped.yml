@@ -1,0 +1,67 @@
+name: Release (air-gapped)
+
+on:
+  push:
+    tags:
+      - 'airgapped/v*'   # e.g. airgapped/v2025.07.09
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout airgapped branch
+        uses: actions/checkout@v4
+        with:
+          ref: airgapped
+          fetch-depth: 0
+
+      - name: Build info
+        id: info
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          SAFE_TAG="${TAG//\//-}"
+          ARCHIVE="helheim-airgapped-${SAFE_TAG#airgapped-}.tar.gz"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+          UPSTREAM_SHA=$(cat .upstream-ref 2>/dev/null || echo "unknown")
+          echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Create archive
+        run: |
+          tar -czf "${{ steps.info.outputs.archive }}" \
+            --exclude='.git' \
+            --exclude='*.elc' \
+            --exclude='.user-lisp-autoloads.el' \
+            --exclude='.github' \
+            .
+
+      - name: Generate release notes
+        run: |
+          UPSTREAM="${{ steps.info.outputs.upstream_sha }}"
+          cat > release_notes.md << EOF
+          Air-gapped helheim-emacs configuration.
+
+          Based on upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs)
+          at commit \`${UPSTREAM}\`.
+
+          ## What is stripped vs the main build
+          - No obsidian/org-vault sync (no network assumed)
+          - No harper-ls prose grammar checker
+          - Built-in \`c-mode\` / \`c++-mode\` instead of tree-sitter variants
+          - \`clangd\` assumed available locally on the target machine
+
+          ## Installation
+          Extract to \`~/.emacs.d/\` (or your Emacs config dir) on the target machine.
+          Set \`org-directory\` in \`init.el\` to wherever your notes live.
+          All packages are vendored in \`site-lisp/\` — no internet required.
+          EOF
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Air-gapped ${{ github.ref_name }}"
+          body_path: release_notes.md
+          files: ${{ steps.info.outputs.archive }}

@@ -61,12 +61,8 @@
         (#xe0cc . #xe0d7) ;;  
     #xe0a3 #xe0ca))))  ;; 
 
-(if (daemonp)
-    ;; Defer to idle timer so font setup runs after the frame is fully ready.
-    (add-hook 'after-make-frame-functions
-              (lambda (frame)
-                (run-with-idle-timer 0.1 nil #'helheim--setup-fonts frame)))
-  (helheim--setup-fonts))
+;; Plain Emacs (not daemon/client) — frame exists at startup, call directly.
+(helheim--setup-fonts)
 
 ;;; Helheim core
 
@@ -135,28 +131,42 @@
 ;;; Org mode
 
 ;; The `org-directory' variable must be set before `helheim-org' loaded!
-(setopt org-directory (expand-file-name "~/obsidian-vault/"))
+;; Set this to wherever your notes live on this machine.
+(setopt org-directory (expand-file-name "~/notes/"))
 
-;; Which modules to load. Place cursor on variable and press "M" to see
-;; all possible values.
 (setq org-modules '(ol-bibtex ol-docview ol-info))
 
 (require 'helheim-org)
 (require 'helheim-org-node)
 (require 'helheim-daily-notes)
 
-;; Auto-sync org vault with git on startup/shutdown
-(require 'org-vault-sync)
+;; org-vault-sync omitted — no network on air-gapped system.
 
 ;;; Major modes
 
-(require 'helheim-cpp)
-(require 'helheim-emacs-lisp)
-(require 'helheim-json)
-(require 'helheim-markdown)
-(require 'helheim-lua)
-(require 'helheim-sh)
+;; Use Emacs built-in modes directly rather than helheim language wrappers.
+;; (Tree-sitter is also not required.)
 
+(require 'helheim-markdown)
+
+;; C / C++ — use classic cc-mode with eglot via clangd
+(setq-default c-basic-offset 4)
+(add-hook 'c-mode-common-hook #'eglot-ensure)
+
+;; JSON — use the vendored json-mode
+(require 'json-mode)
+
+;; Shell scripts — built-in sh-mode, no extra setup needed
+
+;; Lua — use the vendored lua-mode if clangd/lua-lsp is available,
+;; otherwise just syntax highlighting.
+(when (locate-library "lua-mode")
+  (require 'lua-mode))
+
+;; Emacs Lisp enhancements (paredit omitted — needs hel-paredit)
+(setup highlight-defined
+  (:install t)
+  (:hook emacs-lisp-mode-hook))
 
 ;;; Writing and spell checking
 
@@ -173,15 +183,6 @@
   (setq flyspell-issue-message-flag nil)
   (setq flyspell-issue-welcome-flag nil))
 
-;; Built-in dictionary client (Emacs 28+)
-(use-package dictionary
-  ;; :bind ("C-c d" . dictionary-search)
-  :config
-  (setq dictionary-server "dict.org")
-  (setq dictionary-default-popup-strategy "lev")
-  (setq dictionary-create-buttons nil)
-  (setq dictionary-use-single-buffer t))
-
 ;; Auto-expand common typo corrections
 (use-package abbrev
   :hook (text-mode-hook . abbrev-mode))
@@ -191,58 +192,14 @@
 ;; Auto-pair brackets, quotes, etc.
 (electric-pair-mode 1)
 
-;; Ensure eglot starts for C/C++ regardless of whether tree-sitter remaps the mode.
-(add-hook 'c-mode-common-hook #'eglot-ensure)
-(add-hook 'c-ts-mode-hook #'eglot-ensure)
-(add-hook 'c++-ts-mode-hook #'eglot-ensure)
-;; Start harper-ls for text/prose files.
-(add-hook 'text-mode-hook #'eglot-ensure)
-
-;; Restore SPC-d → dired-jump (C-c d is now the diagnostics prefix in new helheim).
-(keymap-set mode-specific-map "d" 'dired-jump)
-
-;; LSP server overrides (helheim-eglot provides the base eglot config)
+;; LSP server overrides
 (with-eval-after-load 'eglot
   (add-to-list 'eglot-server-programs
                '(c-mode . ("clangd" "--header-insertion=never")))
   (add-to-list 'eglot-server-programs
-               '(c-ts-mode . ("clangd" "--header-insertion=never")))
-  (add-to-list 'eglot-server-programs
-               '(text-mode . ("/home/ahmed/.local/bin/harper-ls" "--stdio"))))
+               '(c++-mode . ("clangd" "--header-insertion=never"))))
 
-;;; GDB debugging attach process
+;; Restore SPC-d → dired-jump.
+(keymap-set mode-specific-map "d" 'dired-jump)
 
-(defun gdb-attach-filtered ()
-
-  (interactive)
-
-  (let* ((pattern (read-string "Process name: "))
-
-         (cmd (format
-
-               "ps -u $USER -o pid=,comm=,etime= | grep -i %s"
-
-               (shell-quote-argument pattern)))
-
-         (matches
-
-          (split-string
-
-           (shell-command-to-string cmd)
-
-           "\n" t))
-
-         (choice
-
-          (completing-read
-
-           "Attach to process: "
-
-           matches nil t)))
-
-    (gud-basic-call
-
-     (format "attach %s"
-
-             (car (split-string choice))))))
 ;;; init.el ends here
