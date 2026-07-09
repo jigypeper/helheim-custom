@@ -203,4 +203,40 @@
                '(c-ts-mode . ("clangd" "--header-insertion=never")))
   (add-to-list 'eglot-server-programs
                '(text-mode . ("/home/ahmed/.local/bin/harper-ls" "--stdio"))))
+
+;;; GDB debugging attach process
+
+(defun gdb-attach-filtered ()
+
+  (interactive)
+
+  (let* ((pattern (read-string "Process name: "))
+
+         (cmd (format
+
+               "ps -u $USER -o pid=,comm=,etime= | grep -i %s"
+
+               (shell-quote-argument pattern)))
+
+         (matches
+
+          (split-string
+
+           (shell-command-to-string cmd)
+
+           "\n" t))
+
+         (choice
+
+          (completing-read
+
+           "Attach to process: "
+
+           matches nil t)))
+
+    (gud-basic-call
+
+     (format "attach %s"
+
+             (car (split-string choice))))))
 ;;; init.el ends here
