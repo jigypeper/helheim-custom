@@ -57,30 +57,16 @@ jobs:
             .
 
       - name: Generate release notes
-        id: notes
+        env:
+          TAG: ${{ steps.info.outputs.tag }}
+          UPSTREAM: ${{ steps.info.outputs.upstream_sha }}
+          IS_UPSTREAM: ${{ steps.info.outputs.is_upstream }}
         run: |
-          TAG="${{ steps.info.outputs.tag }}"
-          UPSTREAM="${{ steps.info.outputs.upstream_sha }}"
-
-          if [ "${{ steps.info.outputs.is_upstream }}" = "true" ]; then
-            TITLE="Upstream sync: ${TAG#upstream/}"
-            BODY="Sync of upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs) at commit \`${UPSTREAM}\`.
-
-This release contains the vendored packages in \`site-lisp/\` updated to match
-the upstream snapshot, with the airgapped offline-mode patches applied."
+          if [ "$IS_UPSTREAM" = "true" ]; then
+            printf 'Sync of upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs) at commit `%s`.\n\nVendored packages in `site-lisp/` updated to match the upstream snapshot, with the airgapped offline-mode patches applied.\n' "$UPSTREAM" > release_notes.md
           else
-            BODY="Airgapped helheim-emacs configuration — release \`${TAG}\`.
-
-Based on upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs)
-at commit \`${UPSTREAM}\`.
-
-## Installation
-Extract the archive to your Emacs config directory and ensure \`site-lisp/\`
-is on the target machine."
+            printf 'Helheim-emacs configuration release `%s`.\n\nBased on upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs) at commit `%s`.\n\n## Installation\nExtract to your Emacs config directory. All packages are vendored in `site-lisp/` — no internet required.\n' "$TAG" "$UPSTREAM" > release_notes.md
           fi
-
-          # Write to file to avoid shell quoting issues
-          echo "$BODY" > release_notes.md
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
