@@ -23,6 +23,7 @@
            consult-async-input-throttle 0.2
            consult-async-input-debounce 0.1
            consult-async-refresh-delay  0.15)
+  (require 'consult-xref)
   (setopt xref-show-xrefs-function #'consult-xref
           xref-show-definitions-function #'consult-xref)
   (:after-load
