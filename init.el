@@ -76,16 +76,14 @@
 (setq helheim-package-manager 'site-lisp)
 (require 'helheim-core)
 
-;; Remove all *-ts-mode remaps when tree-sitter is unavailable.
-;; Both Emacs built-ins and helheim-cpp.el set these unconditionally.
+;; Always remove *-ts-mode remaps: airgapped machine won't have grammars.
 (add-hook 'after-init-hook
           (lambda ()
-            (unless (and (fboundp 'treesit-available-p) (treesit-available-p))
-              (setq major-mode-remap-alist
-                    (cl-remove-if
-                     (lambda (x)
-                       (string-suffix-p "-ts-mode" (symbol-name (cdr x))))
-                     major-mode-remap-alist)))))
+            (setq major-mode-remap-alist
+                  (cl-remove-if
+                   (lambda (x)
+                     (string-suffix-p "-ts-mode" (symbol-name (cdr x))))
+                   major-mode-remap-alist))))
 
 ;;; Color theme
 
@@ -192,12 +190,17 @@
 ;; Auto-pair brackets, quotes, etc.
 (electric-pair-mode 1)
 
-;; LSP server overrides
+;; Tell Emacs where LSP binaries live on this machine.
+;; Adjust this path to wherever clangd (and other servers) are installed.
+(add-to-list 'exec-path "/usr/local/bin")   ; <- change to actual binary dir
+
+;; LSP server overrides — use full path so eglot never prompts interactively.
 (with-eval-after-load 'eglot
-  (add-to-list 'eglot-server-programs
-               '(c-mode . ("clangd" "--header-insertion=never")))
-  (add-to-list 'eglot-server-programs
-               '(c++-mode . ("clangd" "--header-insertion=never"))))
+  (let ((clangd (or (executable-find "clangd") "clangd")))
+    (add-to-list 'eglot-server-programs
+                 `(c-mode . (,clangd "--header-insertion=never")))
+    (add-to-list 'eglot-server-programs
+                 `(c++-mode . (,clangd "--header-insertion=never")))))
 
 ;; Restore SPC-d → dired-jump.
 (keymap-set mode-specific-map "d" 'dired-jump)

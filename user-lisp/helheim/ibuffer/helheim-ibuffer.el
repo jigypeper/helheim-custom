@@ -37,19 +37,17 @@
           ;; ibuffer-deletion-char  ?D
           )
   (:hook ibuffer-mode-hook ibuffer-auto-mode) ; Automatically update Ibuffer.
-  ;; Project filter groups
-  (progn
-    (setopt ibuffer-maybe-show-predicates '(helheim-ibuffer-maybe-show-p))
+  (:after-load
+    (load "helheim-ibuffer-lib" nil t)   ; defines helheim-ibuffer-maybe-show-p
+    (load "helheim-ibuffer-keys" nil t)
+    ;; Set predicates after lib is loaded so the function is defined.
+    (setopt ibuffer-maybe-show-predicates (list #'helheim-ibuffer-maybe-show-p)
+            project-buffers-viewer #'helheim-ibuffer-project-buffers)
     (advice-add 'ibuffer-generate-filter-groups
                 :before #'helheim-ibuffer-update-project-filter-groups)
     ;; <leader> b b
     (define-advice ibuffer-jump (:after (&optional _other-window) helheim)
       (ibuffer-switch-to-saved-filter-groups "Project"))
-    ;; <leader> p C-b
-    (setopt project-buffers-viewer 'helheim-ibuffer-project-buffers))
-  (:after-load
-    (load "helheim-ibuffer-lib" nil t)
-    (load "helheim-ibuffer-keys" nil t)
     ;;
     (require 'mule-util)
     (setopt ibuffer-eliding-string (truncate-string-ellipsis))

@@ -37,8 +37,9 @@
                      mode-line-active
                      mode-line-inactive
                      header-line
-                     header-line-inactive))
-      (set-face-font face (face-font 'fixed-pitch)))))
+                     header-line-inactive)) ; header-line-inactive added in Emacs 30
+      (when (facep face)
+        (set-face-font face (face-font 'fixed-pitch))))))
 
 (if (daemonp)
     (add-hook 'after-make-frame-functions #'helheim--setup-modeline-font)

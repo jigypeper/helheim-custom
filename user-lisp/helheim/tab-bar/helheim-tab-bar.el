@@ -44,12 +44,14 @@
 ;;; Config
 
 (setup tab-bar
-  (:setopt tab-bar-format '(tab-bar-format-history
-                            tab-bar-format-tabs-groups
-                            tab-bar-separator
-                            tab-bar-format-add-tab
-                            tab-bar-format-align-right
-                            tab-bar-format-global)
+  (:setopt tab-bar-format (delq nil
+                           (list (and (fboundp 'tab-bar-format-history)
+                                      'tab-bar-format-history)
+                                 'tab-bar-format-tabs-groups
+                                 'tab-bar-separator
+                                 'tab-bar-format-add-tab
+                                 'tab-bar-format-align-right
+                                 'tab-bar-format-global))
            ;; tab-bar-new-tab-choice "*dashboard*" ;; Buffer to show in new tab.
            tab-bar-tab-hints nil ;; Show tab numbers.
            tab-bar-close-button-show nil
