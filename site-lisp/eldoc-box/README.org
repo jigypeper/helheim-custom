@@ -1,0 +1,89 @@
+#+TITLE: ElDoc box
+
+This package displays ElDoc documentations in a childframe. The childframe is selectable and scrollable with mouse, even though the cursor is hidden.
+
+[[https://melpa.org/#/eldoc-box][file:https://melpa.org/packages/eldoc-box-badge.svg]]
+[[https://stable.melpa.org/#/eldoc-box][file:https://stable.melpa.org/packages/eldoc-box-badge.svg]]
+
+#+CAPTION: Using with eglot in python-mode
+[[./screenshot.png]]
+
+* Install
+Get the file, add to load path, and
+#+BEGIN_SRC emacs-lisp
+(require 'eldoc-box)
+#+END_SRC
+
+It is also available on [[https://melpa.org/#/eldoc-box][MELPA]].
+
+* Usage
+*Note:* If you use Gnome and Emacs 27, set ~x-gtk-resize-child-frames~ to ~resize-mode~ to avoid breakage of childframe.
+
+There are primarily two ways of using this package. You can bind =eldoc-box-help-at-point= to a key and type that key to show documentation on-demand at point, or you can enable one of the minor modes which shows documentation automatically when you move the point around.
+
+** Function
+
+*Minor modes*
+
+- =eldoc-box-hover-mode= :: Enables a minor mode that displays documentation of the symbol at point in a childframe on upper corner.
+- =eldoc-box-hover-at-point-mode= :: Same as =eldoc-box-hover-mode= except the childframe is displayed at point, instead of on the upper corner. /Note that this mode brings a small but noticeable slow-down./
+- =eldoc-box-mouse-mode= :: Instead of showing doc at point, show doc at mouse pointer. /This mode needs to enable =track-mouse=, which might slow down Emacs./
+
+Only one of these modes can be enabled at a time.
+
+*Commands*
+
+- =eldoc-box-help-at-point= :: Display the documentation of the symbol at point in a temporary childframe, moving point or typing =C-g= (=eldoc-box-clear-with-C-g=) disposes the childframe. Requires Emacs 28. The minor modes don’t need to be enabled for this command to work. Invoking =eldoc-box-help-at-point= again while childframe is visible switches focus to the childfame, after that press =q= to quit the childframe.
+- =eldoc-box-scroll-up/down= :: Scrolls the childframe up/down.
+
+** Face
+- =eldoc-box-border= :: Adjust =:background= of this face for border color.
+- =eldoc-box-body= :: Default face used by childframe.  I suggest to use a nice sans serif font.
+- =eldoc-box-markdown-separator= :: Face for the separator line (=<br>=) in Markdown documentation.
+
+** Hooks
+- =eldoc-box-buffer-hook= :: A hook that runs after buffer for doc is setup. Run inside the new buffer every time before the new documentation is displayed.
+- =eldoc-box-frame-hook= :: A hook that runs after doc frame is setup but just before it is made visible. Each function runs inside the child frame and receives the main frame as the sole argument.
+- =eldoc-box-buffer-setup-hook= :: A hook that runs before =eldoc-box-buffer-hook= in the doc buffer. Each function is passed the source code buffer as the sole argument. Unlike =eldoc-box-buffer-hook=, eldoc-box takes the value of this hook from the original buffer (that contains source code), not the doc buffer. This allows more flexible customization for this hook based on major modes.
+
+** Variable
+- =eldoc-box-max-pixel-width= & =eldoc-box-max-pixel-height= :: The max width/height of the childframe.
+- =eldoc-box-only-multi-line= :: Set this to non-nil and eldoc-box will only display multi-line message in childframe, and one line messages are left in minibuffer.
+- =eldoc-box-cleanup-interval= :: After this amount of seconds, eldoc-box will attempt to cleanup the childframe. E.g. if it is set to 1, the childframe is cleared 1 second after you moved the point to somewhere else (that doesn't have a doc to show). This doesn't apply to =eldoc-box-hover-at-point-mode=. In that mode, the childframe is cleared as soon as point moves.
+- =eldoc-box-fringe-use-same-bg= :: Whether to set fringe’s background color to as same as that of default. Default to t.
+- =eldoc-box-self-insert-command-list= :: By default =eldoc-box-hover-at-point-mode= only keeps childframe display while you are typing (ie, when =this-command= is =self-insert-command=). But if you bind something else to your keys, eldoc-box can’t recognize it and will hide childframe when you type. Add your command to this list so eldoc-box won’t hide childframe when this command is called.
+- =eldoc-box-lighter= :: Lighter displayed on the mode line.
+- =eldoc-box-buffer-setup-function= :: A function that runs in eldoc-box doc buffer for setup. See docstring for more information.
+- =eldoc-box-hover-display-frame-above-point= :: If non-nil, eldoc-box tries to display the at-point childframe above the point, instead of below.
+- =eldoc-box-mouse-mode-idle-delay= :: Time to wait until showing the doc in =eldoc-box-mouse-mode=.
+
+** Use with eglot
+
+#+BEGIN_SRC emacs-lisp
+(add-hook 'eglot-managed-mode-hook #'eldoc-box-hover-mode t)
+#+END_SRC
+
+To keep eldoc from displaying documentation at point without enabling any minor mode above: =(add-to-list 'eglot-ignored-server-capabilites :hoverProvider)=.
+
+** Default prettifier
+
+By default, eldoc-box tries to prettify the displayed markdown documentation as shown below. If you wish to disable them, remove the prettifier functions from =eldoc-box-buffer-hook=. Report an issue if there are other things can be prettfied away.
+
+[[./demo.png]]
+
+** Prettify Typescript error message
+
+To prettify Typescript error messages, add =eldoc-box-prettify-ts-errors= to =eldoc-box-buffer-setup-hook= in Typescript modes.
+
+#+begin_src elisp
+(add-hook 'eldoc-box-buffer-setup-hook #'eldoc-box-prettify-ts-errors 0 t)
+#+end_src
+
+This way, Eldoc-box will format and highlight the types and properties in error messages:
+
+[[./prettify-ts-error.png]]
+
+
+* Credit
+- Thanks to [[https://github.com/joaotavora][João Távora]] for valuable contribution and explaining eldoc and eglot internals to me.
+- This package is initially adapted from Sebastien Chapuis’s package lsp-ui.el.
