@@ -94,7 +94,7 @@
 ;;; Color theme
 
 (require 'helheim-modus-themes)
-(load-theme 'modus-operandi t)
+(load-theme 'modus-operandi-tinted t)
 
 ;; I can recommend `leuven' theme for org-mode work. It has so many nice little
 ;; touches to spruce up org-mode elements that some users switch to it from
