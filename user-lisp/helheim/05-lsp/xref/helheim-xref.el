@@ -3,6 +3,8 @@
 (setup xref
   ;; (:install t)
   (:built-in)
+  ;; Load the lib early so the functions are defined before remaps are set.
+  (load "helheim-xref-lib" nil t)
   (:setopt xref-search-program 'ripgrep ;; or 'ugrep
            xref-auto-jump-to-first-definition 'show
            xref-prompt-for-identifier nil
@@ -13,7 +15,7 @@
            xref-show-xrefs-function #'xref-show-definitions-completing-read
            xref-show-definitions-function #'xref-show-definitions-completing-read)
   (:global-bind
-    ;; Make Xref try all backends untill first one succeed
+    ;; Make Xref try all backends until first one succeeds.
     [remap xref-find-references]  'helheim-xref-find-references
     [remap xref-find-definitions] 'helheim-xref-find-definitions
     [remap xref-find-definitions-other-window] 'helheim-xref-find-definitions-other-window
