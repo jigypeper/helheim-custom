@@ -14,6 +14,13 @@
   (:install mcp-server :host github :repo "rhblind/emacs-mcp-server"
     :files ("*.el" "tools/*.el" "mcp-wrapper.py" "mcp-wrapper.sh"))
   (:setopt mcp-server-security-prompt-for-permissions t)
+  ;; Unix domain sockets aren't supported by native Windows Emacs
+  ;; (`make-network-process' signals "Unknown address family"); use TCP
+  ;; there instead. Defaults to the loopback address on a random free port.
+  ;; NOTE: `:setopt' only works as a direct `setup' body form, not nested
+  ;; inside `when', so a plain `setq' is used here instead.
+  (when (eq system-type 'windows-nt)
+    (setq mcp-server-default-transport "tcp"))
   (with-eval-after-load 'org
     (:setopt mcp-server-emacs-tools-org-allowed-roots (list org-directory)
              mcp-server-emacs-tools-org-auto-save t))
