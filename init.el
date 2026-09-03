@@ -76,14 +76,9 @@
 (setq helheim-package-manager 'site-lisp)
 (require 'helheim-core)
 
-;; Always remove *-ts-mode remaps: airgapped machine won't have grammars.
-(add-hook 'after-init-hook
-          (lambda ()
-            (setq major-mode-remap-alist
-                  (cl-remove-if
-                   (lambda (x)
-                     (string-suffix-p "-ts-mode" (symbol-name (cdr x))))
-                   major-mode-remap-alist))))
+;; Unlike the airgapped build, tree-sitter grammars for our languages are
+;; vendored as prebuilt Windows DLLs in site-lisp/tree-sitter/ (see
+;; early-init.el), so *-ts-mode remaps are left in place here.
 
 ;;; Color theme
 
@@ -120,6 +115,14 @@
 (require 'helheim-xref)     ; Go to definition framework
 (require 'helheim-eglot)    ; eglot + flymake (both built-in)
 
+;;; LLM
+
+;; GitHub Copilot CLI via agent-shell (ACP). Requires the `copilot' CLI to be
+;; installed, on PATH, and already authenticated (run `copilot' once outside
+;; Emacs to log in) -- see user-lisp/helheim/08-llm/agent-shell/README.org.
+(require 'helheim-agent-shell)
+(require 'helheim-mcp-server) ; Exposes this Emacs as an MCP server
+
 ;;; Version control
 
 (require 'helheim-magit)    ; Magit
@@ -142,24 +145,15 @@
 
 ;;; Major modes
 
-;; Use Emacs built-in modes directly rather than helheim language wrappers.
-;; (Tree-sitter is also not required.)
+;; Use the helheim language wrappers so tree-sitter modes (backed by the
+;; vendored Windows grammar DLLs) are wired up via `major-mode-remap-alist',
+;; falling back to the classic mode + eglot when a grammar isn't available.
 
 (require 'helheim-markdown)
-
-;; C / C++ — use classic cc-mode with eglot via clangd
-(setq-default c-basic-offset 4)
-(add-hook 'c-mode-common-hook #'eglot-ensure)
-
-;; JSON — use the vendored json-mode
-(require 'json-mode)
-
-;; Shell scripts — built-in sh-mode, no extra setup needed
-
-;; Lua — use the vendored lua-mode if clangd/lua-lsp is available,
-;; otherwise just syntax highlighting.
-(when (locate-library "lua-mode")
-  (require 'lua-mode))
+(require 'helheim-cpp)  ; C / C++ — c-ts-mode / c++-ts-mode + eglot via clangd
+(require 'helheim-json) ; JSON — json-mode / json-ts-mode
+(require 'helheim-sh)   ; Shell scripts — sh-mode / bash-ts-mode
+(require 'helheim-lua)  ; Lua — lua-mode (if installed) / lua-ts-mode
 
 ;; Emacs Lisp enhancements (paredit omitted — needs hel-paredit)
 (setup highlight-defined
@@ -170,9 +164,14 @@
 
 (use-package ispell
   :config
-  (setq ispell-program-name "aspell")
+  ;; aspell is painful to obtain on Windows; default to hunspell there
+  ;; instead (`winget install --id FSFhu.Hunspell -e`). Override this if
+  ;; you've installed aspell some other way.
+  (setq ispell-program-name (if (eq system-type 'windows-nt) "hunspell" "aspell"))
   (setq ispell-dictionary "en_GB")
-  (setq ispell-extra-args '("--sug-mode=ultra" "--lang=en_GB")))
+  (setq ispell-extra-args (if (eq system-type 'windows-nt)
+                              '("-d" "en_GB")
+                            '("--sug-mode=ultra" "--lang=en_GB"))))
 
 (use-package flyspell
   :hook ((text-mode-hook . flyspell-mode)
@@ -192,7 +191,12 @@
 
 ;; Tell Emacs where LSP binaries live on this machine.
 ;; Adjust this path to wherever clangd (and other servers) are installed.
-(add-to-list 'exec-path "/usr/local/bin")   ; <- change to actual binary dir
+;; This is only a hint: the `eglot-server-programs' entries below already
+;; fall back to whatever `executable-find' locates on PATH.
+(add-to-list 'exec-path
+             (if (eq system-type 'windows-nt)
+                 "C:/Program Files/LLVM/bin" ; <- change to actual clangd dir
+               "/usr/local/bin"))
 
 ;; LSP server overrides — use full path so eglot never prompts interactively.
 (with-eval-after-load 'eglot

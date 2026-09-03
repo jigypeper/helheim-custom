@@ -281,6 +281,18 @@ cookies.")
           (when (file-directory-p subdir)
             (add-to-list 'load-path subdir)))))))
 
+;;; Tree-sitter grammars (Windows)
+;;
+;; We don't have a working C compiler toolchain on Windows (clang.exe alone
+;; lacks the linker/MinGW plumbing `treesit-install-language-grammar'
+;; assumes), so instead of compiling grammars on the fly, prebuilt Windows
+;; DLLs are vendored in site-lisp/tree-sitter/ (sourced from
+;; casouri/tree-sitter-module's Windows release). Point Emacs at them here.
+(when (eq system-type 'windows-nt)
+  (with-eval-after-load 'treesit
+    (add-to-list 'treesit-extra-load-path
+                 (expand-file-name "site-lisp/tree-sitter/" helheim-root-directory))))
+
 ;; Local variables:
 ;; byte-compile-warnings: (not obsolete free-vars)
 ;; End:

@@ -1,0 +1,37 @@
+* helheim-agent-shell
+
+This module installs and configures [[https://github.com/xenodium/agent-shell][agent-shell]] — an Emacs shell for interacting
+with LLM agents via ACP ([[https://agentclientprotocol.com][Agent Client Protocol]]).
+
+** Enable
+#+begin_src emacs-lisp
+(require 'helheim-agent-shell)
+#+end_src
+
+** Packages (vendored offline in site-lisp/)
+- [[https://github.com/xenodium/agent-shell][agent-shell]]
+- [[https://github.com/xenodium/acp.el][acp]]
+- [[https://github.com/xenodium/shell-maker][shell-maker]]
+
+** GitHub Copilot CLI
+~agent-shell~ ships a ready-made backend for GitHub Copilot
+(=agent-shell-github.el=) that spawns =copilot --acp= — the Copilot CLI's
+public, documented ACP server. To use it:
+
+1. Install the GitHub Copilot CLI (=copilot=) and make sure it's on ~PATH~.
+2. Run =copilot= once outside Emacs to authenticate.
+3. =M-x agent-shell= (or =C-c a RET=) and pick the Copilot agent, or run
+   =M-x agent-shell-github-start-copilot= directly.
+
+Any other ACP-compatible agent CLI you install (Claude Agent, Codex, Gemini
+CLI, Cursor, etc.) is picked up the same way — see the upstream README for
+the full list and per-agent install instructions.
+
+** Usage
+
+| Key | Description |
+|-----------+----------------------------------------------------------|
+| =C-c a RET= | Start new / switch to running ~agent-shell~ session |
+| =C-c a n= | Start new ~agent-shell~ session |
+| =C-c a w= | Create a new git worktree and start an agent shell in it |
+| =C-c a s= | Send selection or full buffer to ~agent-shell~ session |

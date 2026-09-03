@@ -474,36 +474,35 @@ Use `delete-trailing-whitespace' command."
                         ,(if abi<15 "v0.20.0")) ;; "v0.23.1"
             (css        "https://github.com/tree-sitter/tree-sitter-css"
                         ,(if abi<15 "v0.23.0")) ;; "v0.23.2"
-            (commonlisp "https://github.com/tree-sitter-grammars/tree-sitter-commonlisp"
-                        "v0.4.1")
+            ;; `commonlisp' omitted on Windows: no prebuilt DLL is available
+            ;; (casouri/tree-sitter-module doesn't build it), and compiling
+            ;; on-the-fly needs a working cc/clang+linker toolchain we don't
+            ;; have. Re-add if you get a working compiler or find a DLL.
             (dockerfile "https://github.com/camdencheek/tree-sitter-dockerfile")
             (elixir     "https://github.com/elixir-lang/tree-sitter-elixir")
             (go         "https://github.com/tree-sitter/tree-sitter-go"
                         ,(if abi<15 "v0.20.0")) ;; "v0.25.0"
             (gomod      "https://github.com/camdencheek/tree-sitter-go-mod"
                         "v1.0.2")
-            (gowork     "https://github.com/omertuc/tree-sitter-go-work")
+            ;; `gowork' omitted on Windows: no prebuilt DLL available.
             (html       "https://github.com/tree-sitter/tree-sitter-html"
                         ,(if abi<15 "v0.23.0")) ;; "v0.23.2"
             (java       "https://github.com/tree-sitter/tree-sitter-java")
             (javascript "https://github.com/tree-sitter/tree-sitter-javascript"
                         ,(if abi<15 "v0.23.0"))
-            (latex      "https://github.com/latex-lsp/tree-sitter-latex"
-                        "v0.3.0")
+            ;; `latex' omitted on Windows: no prebuilt DLL available.
             ;; (bibtex     "https://github.com/latex-lsp/tree-sitter-bibtex")
             (make       "https://github.com/tree-sitter-grammars/tree-sitter-make")
             (markdown   "https://github.com/tree-sitter-grammars/tree-sitter-markdown"
                         ,(if abi<15 "v0.4.1") ;; "v0.5.3"
                         "tree-sitter-markdown/src")
-            (markdown-inline
-                        "https://github.com/tree-sitter-grammars/tree-sitter-markdown"
-                        ,(if abi<15 "v0.4.1") ;; "v0.5.3"
-                        "tree-sitter-markdown-inline/src")
+            ;; `markdown-inline' omitted on Windows: no prebuilt DLL available
+            ;; in the current casouri/tree-sitter-module Windows release.
             (nix        "https://github.com/nix-community/tree-sitter-nix")
             (perl       "https://github.com/ganezdragon/tree-sitter-perl")
             (python     "https://github.com/tree-sitter/tree-sitter-python"
                         ,(if abi<15 "v0.23.6")) ;; "v0.25.0"
-            (r          "https://github.com/r-lib/tree-sitter-r")
+            ;; `r' omitted on Windows: no prebuilt DLL available.
             (ruby       "https://github.com/tree-sitter/tree-sitter-ruby")
             (rust       "https://github.com/tree-sitter/tree-sitter-rust"
                         ,(if abi<15 "v0.23.2")) ;; "v0.24.2"

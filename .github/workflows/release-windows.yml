@@ -1,0 +1,53 @@
+name: Release (Windows)
+
+on:
+  push:
+    tags:
+      - 'windows/v*'   # e.g. windows/v2026.09.03
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout windows-config branch
+        uses: actions/checkout@v4
+        with:
+          ref: windows-config
+          fetch-depth: 0
+
+      - name: Build info
+        id: info
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          SAFE_TAG="${TAG//\//-}"
+          ARCHIVE="helheim-windows-${SAFE_TAG#windows-}.zip"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+          UPSTREAM_SHA=$(cat .upstream-ref 2>/dev/null || echo "unknown")
+          echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Create archive
+        run: |
+          zip -r -q "/tmp/${{ steps.info.outputs.archive }}" . \
+            -x '.git/*' \
+            -x '*.elc' \
+            -x '.user-lisp-autoloads.el' \
+            -x '.github/*'
+          mv "/tmp/${{ steps.info.outputs.archive }}" "${{ steps.info.outputs.archive }}"
+
+      - name: Generate release notes
+        env:
+          UPSTREAM: ${{ steps.info.outputs.upstream_sha }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          printf 'Windows helheim-emacs — `%s`.\n\nBased on upstream [helheim-emacs](https://github.com/anuvyklack/helheim-emacs) at commit `%s`.\n\n## Differences from main build\n- No org-vault/obsidian sync\n- No harper-ls\n- Tree-sitter grammars are vendored as prebuilt Windows DLLs (site-lisp/tree-sitter/) — no compiler needed\n- GitHub Copilot CLI integration via agent-shell (ACP); `copilot` must be installed, on PATH, and authenticated\n- Plain `emacs` startup (no daemon/client)\n\n## Installation\nExtract to your Emacs config directory. Set `org-directory` in `init.el` to your notes path. All packages are vendored in `site-lisp/` — no internet required at runtime, aside from optionally calling out to the GitHub Copilot CLI.\n' "$TAG" "$UPSTREAM" > release_notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Windows ${{ github.ref_name }}"
+          body_path: release_notes.md
+          files: ${{ steps.info.outputs.archive }}
